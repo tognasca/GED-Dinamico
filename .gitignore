@@ -4,6 +4,8 @@
 **/dist/
 **/.env
 **/data/
+!backend/Ged.Api/Data/
+!backend/Ged.Api/Data/**
 .vs/
 .idea/
 .DS_Store
