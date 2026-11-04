@@ -21,10 +21,13 @@
       ConnectionStrings__Default: Host=database;Port=5432;Database=ged;Username=ged;Password=${GED_DB_PASSWORD:-local-development-only}
       Storage__Root: /app/data/files
       Frontend__Origin: http://localhost:8087
+      FolderImport__Enabled: "true"
+      FolderImport__Root: /app/import
     ports:
       - "127.0.0.1:9192:8080"
     volumes:
       - ged-files:/app/data/files
+      - ./GED:/app/import
     depends_on:
       database:
         condition: service_healthy
