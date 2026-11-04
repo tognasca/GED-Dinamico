@@ -20,9 +20,9 @@
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Default: Host=database;Port=5432;Database=ged;Username=ged;Password=${GED_DB_PASSWORD:-local-development-only}
       Storage__Root: /app/data/files
-      Frontend__Origin: http://localhost:5173
+      Frontend__Origin: http://localhost:8087
     ports:
-      - "127.0.0.1:5096:8080"
+      - "127.0.0.1:9192:8080"
     volumes:
       - ged-files:/app/data/files
     depends_on:
