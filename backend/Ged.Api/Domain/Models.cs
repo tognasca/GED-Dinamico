@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Ged.Api.Domain;
 
@@ -16,7 +17,9 @@ public sealed class DocumentType : TenantOwned
     public string FieldsJson { get; set; } = "[]";
     public int Version { get; set; } = 1;
     public bool Active { get; set; } = true;
+    [NotMapped]
     public List<FieldDefinition> Fields => JsonSerializer.Deserialize<List<FieldDefinition>>(FieldsJson, JsonOptions.Default) ?? [];
+    [NotMapped]
     public List<string> Keywords => JsonSerializer.Deserialize<List<string>>(KeywordsJson, JsonOptions.Default) ?? [];
 }
 
