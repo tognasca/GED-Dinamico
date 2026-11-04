@@ -11,8 +11,6 @@ builder.Services.AddSingleton<IOcrProvider, TesseractOcrProvider>();
 builder.Services.AddSingleton<DocumentExtraction>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddCors(o => o.AddPolicy("web", p => p.WithOrigins(builder.Configuration["Frontend:Origin"] ?? "http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
-
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("GedFrontend", policy =>
@@ -36,7 +34,7 @@ app.UseSwaggerUI();
 // Do not expose to the Internet until proper JWT auth + tenant claims are implemented.
 app.Use(async (ctx, next) =>
 {
-    if (ctx.Request.Path.StartsWithSegments("/api"))
+    if (ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.Path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
     {
         if (!Guid.TryParse(ctx.Request.Headers["X-Tenant-Id"], out var tenantId) || tenantId == Guid.Empty)
         {
