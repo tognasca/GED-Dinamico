@@ -5,14 +5,14 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   const apiTarget =
-    env.GED_API_TARGET || 'http://127.0.0.1:5096';
+    env.GED_API_TARGET || 'http://127.0.0.1:9192';
 
   return {
     plugins: [react()],
 
     server: {
       host: '0.0.0.0',
-      port: 5173,
+      port: 8087,
       strictPort: true,
 
       proxy: {
