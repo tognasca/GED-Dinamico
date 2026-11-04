@@ -10,6 +10,8 @@ builder.Services.AddDbContext<GedDbContext>(x => x.UseNpgsql(builder.Configurati
 builder.Services.AddSingleton<IStorageProvider, LocalStorageProvider>();
 builder.Services.AddSingleton<IOcrProvider, TesseractOcrProvider>();
 builder.Services.AddSingleton<DocumentExtraction>();
+if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("FolderImport:Enabled"))
+    builder.Services.AddHostedService<FolderImportWorker>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddCors(options =>
