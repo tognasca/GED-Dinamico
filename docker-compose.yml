@@ -1,0 +1,35 @@
+﻿services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ged
+      POSTGRES_USER: ged
+      POSTGRES_PASSWORD: ${GED_DB_PASSWORD:-local-development-only}
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - ged-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ged -d ged"]
+      interval: 5s
+      retries: 12
+
+  api:
+    build: ./backend/Ged.Api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Default: Host=database;Port=5432;Database=ged;Username=ged;Password=${GED_DB_PASSWORD:-local-development-only}
+      Storage__Root: /app/data/files
+      Frontend__Origin: http://localhost:5173
+    ports:
+      - "127.0.0.1:5095:8080"
+    volumes:
+      - ged-files:/app/data/files
+    depends_on:
+      database:
+        condition: service_healthy
+
+volumes:
+  ged-postgres:
+  ged-files:
+

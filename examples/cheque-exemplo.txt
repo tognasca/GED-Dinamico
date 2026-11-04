@@ -1,0 +1,8 @@
+BANCO EXEMPLO - CHEQUE
+Número: 000128
+Banco: Banco Exemplo
+Agência: 1234-5
+Conta: 98765-4
+Valor: R$ 2.450,00
+Favorecido: Empresa ABC
+Data: 03/11/2026
