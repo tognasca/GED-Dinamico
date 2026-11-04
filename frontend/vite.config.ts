@@ -5,7 +5,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   const apiTarget =
-    env.GED_API_TARGET || 'http://127.0.0.1:5095';
+    env.GED_API_TARGET || 'http://127.0.0.1:5096';
 
   return {
     plugins: [react()],
