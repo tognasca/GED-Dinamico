@@ -85,3 +85,18 @@ Veja [docs/ROADMAP.md](docs/ROADMAP.md) e [docs/ARQUITETURA.md](docs/ARQUITETURA
 Opcionalmente instale GitHub CLI com `winget install --id GitHub.cli`, autentique com `gh auth login`, navegue até a pasta extraída e execute `./PUBLICAR-GITHUB.ps1`. Esse script cria `tognasca/GED-Dinamico` como **privado** e faz o primeiro push. Não cole tokens no terminal nem nos arquivos do repositório. A criação do repositório não pôde ser executada automaticamente por esta conexão.
 
 O workflow em `.github/workflows/ci.yml` fará builds do backend e frontend depois do push. O build **ainda não foi validado** neste ambiente por ausência do SDK .NET e das dependências npm.
+
+
+## Importação automática de pasta (desenvolvimento)
+
+O serviço `api` do Docker Compose monitora **`C:\\git\\GED-Dinamico\\GED\\Entrada`** (assumindo que o repositório esteja em `C:\\git\\GED-Dinamico`). Não é necessário manter o navegador aberto. A API e o Docker Desktop devem permanecer em execução.
+
+1. Execute `git pull origin main` e `docker compose up -d --build --force-recreate api`.
+2. Crie a pasta `GED\\Entrada` na raiz do repositório e copie PDFs, imagens ou TXT para lá.
+3. O worker aguarda o arquivo estabilizar, calcula SHA-256, evita reimportar documentos com hash já registrado no tenant de demonstração, executa OCR, sugere/aplica o modelo quando a classificação é inequívoca e registra o documento no PostgreSQL.
+4. Arquivos processados são movidos para `GED\\Processados`. Formatos inválidos ou falhas de OCR vão para `GED\\Erros`. Confira `docker compose logs -f api` e a biblioteca de documentos no frontend.
+5. Documentos identificados ficam em **NeedsReview** e precisam de confirmação humana para indexação. O worker **não** aprova dados automaticamente.
+
+Formatos: PDF, PNG, JPG, TIFF, WEBP e TXT; limite de 25 MB. Os dez modelos de seguros são criados apenas para o tenant de demonstração no ambiente Development.
+
+**Importante:** a importação usa um tenant fixo e ainda não oferece autenticação, autorização, auditoria completa, migrações de banco, varredura antivírus, nem controle transacional da fila. **Não use em produção ou com documentos reais de clientes** até implementar essas proteções. A montagem `./GED:/app/import` é local e não expõe a pasta pela Internet. Não altere o ambiente para Production esperando que o monitoramento de demonstração continue ativo.
