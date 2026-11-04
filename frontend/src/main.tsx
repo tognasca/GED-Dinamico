@@ -7,6 +7,27 @@ import './style.css';
 type View = 'capture' | 'models' | 'documents' | 'batches' | 'physical';
 const defaultField = (): Field => ({ key: '', label: '', dataType: 'text', required: false, anchor: '' });
 
+function normalizeFieldKey(value: string): string {
+  const normalized = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+  const key = /^[a-z]/.test(normalized) ? normalized : `campo_${normalized || 'novo'}`;
+  return key.slice(0, 64);
+}
+
+function prepareFields(fields: Field[]): Field[] {
+  const seen = new Set<string>();
+  return fields.map((field, index) => {
+    const base = normalizeFieldKey(field.key || field.label || `campo_${index + 1}`);
+    let key = base;
+    let suffix = 2;
+    while (seen.has(key)) {
+      const ending = `_${suffix++}`;
+      key = base.slice(0, 64 - ending.length) + ending;
+    }
+    seen.add(key);
+    return { ...field, key, label: field.label.trim() || key };
+  });
+}
+
 function App() {
   const [view, setView] = useState<View>('capture');
   const [types, setTypes] = useState<DocumentType[]>([]);
@@ -59,13 +80,13 @@ function App() {
       const suffix = batchId ? `?batchId=${batchId}` : '';
       const doc = await api<GedDocument>(`/documents/upload${suffix}`, { method: 'POST', body: form });
       setSelected(doc); setFile(null); setView('capture');
-      setFields((Array.isArray(doc.suggestions) ? doc.suggestions as Suggestion[] : []).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label })));
+      setFields(prepareFields((Array.isArray(doc.suggestions) ? doc.suggestions as Suggestion[] : []).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label }))));
       setNotice(doc.ocrStatus === 'Completed' ? 'OCR concluído. Confira os campos e configure seu modelo.' : 'Documento salvo, mas o OCR precisa de atenção.');
     });
   }
   async function createType() {
     await perform(async () => {
-      const result = await api<{ id: string }>('/types', { method: 'POST', body: JSON.stringify({ name: modelName, keywords: keywords.split(',').map(x => x.trim()).filter(Boolean), fields }) });
+      const result = await api<{ id: string }>('/types', { method: 'POST', body: JSON.stringify({ name: modelName, keywords: keywords.split(',').map(x => x.trim()).filter(Boolean), fields: prepareFields(fields) }) });
       setChosenTemplate(result.id); setModelName(''); setNotice('Modelo criado. Aplique-o ao documento para extrair os campos.');
     });
   }
