@@ -3,6 +3,7 @@ using Ged.Api.Domain;
 using Ged.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<GedDbContext>(x => x.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
@@ -71,8 +72,10 @@ api.MapPost("/types", async (HttpContext ctx, GedDbContext db, CreateTypeRequest
     var tenant = Tenant(ctx);
     if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 100 || request.Fields is null || request.Fields.Count == 0 || request.Fields.Count > 100)
         return Results.BadRequest(new { error = "Name and 1-100 fields are required" });
-    if (request.Fields.Any(f => !System.Text.RegularExpressions.Regex.IsMatch(f.Key, "^[a-zA-Z][a-zA-Z0-9_]{0,63}$")) || request.Fields.Select(f => f.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Fields.Count)
-        return Results.BadRequest(new { error = "Invalid or duplicate field keys" });
+    var invalidKeys = request.Fields.Where(f => string.IsNullOrWhiteSpace(f.Key) || !Regex.IsMatch(f.Key, "^[a-zA-Z][a-zA-Z0-9_]{0,63}$")).Select(f => f.Key).ToArray();
+    var duplicateKeys = request.Fields.GroupBy(f => f.Key?.Trim() ?? "", StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToArray();
+    if (invalidKeys.Length > 0 || duplicateKeys.Length > 0)
+        return Results.BadRequest(new { error = "Invalid or duplicate field keys", invalidKeys, duplicateKeys });
     if (await db.DocumentTypes.AnyAsync(x => x.TenantId == tenant && x.Name == request.Name.Trim())) return Results.Conflict(new { error = "Document type already exists" });
     var type = new DocumentType { TenantId = tenant, Name = request.Name.Trim(), FieldsJson = JsonSerializer.Serialize(request.Fields, JsonOptions.Default), KeywordsJson = JsonSerializer.Serialize(request.Keywords ?? [], JsonOptions.Default) };
     db.DocumentTypes.Add(type);
@@ -255,6 +258,8 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<GedDbContext>();
     await db.Database.EnsureCreatedAsync();
+    if (app.Environment.IsDevelopment())
+        await InsuranceTemplateSeeder.SeedAsync(db);
 }
 app.Run();
 
