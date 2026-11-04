@@ -21,7 +21,7 @@ npm run dev
 ```
 
 - **Frontend:** http://localhost:5173
-- **API Swagger:** http://localhost:5088/swagger
+- **API Swagger:** http://localhost:5096/swagger
 - **PostgreSQL:** `127.0.0.1:5435` (apenas loopback).
 
 O `git clone` acima pressupõe que o repositório novo tenha sido criado e os arquivos publicados. Caso use o ZIP, extraia e execute os comandos a partir de `docker compose up -d --build`.
