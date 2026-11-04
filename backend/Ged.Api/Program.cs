@@ -173,7 +173,10 @@ api.MapGet("/documents/{id:guid}/file", async (Guid id, HttpContext ctx, GedDbCo
 });
 
 api.MapGet("/batches", async (HttpContext ctx, GedDbContext db) =>
-    Results.Ok(await db.Batches.Where(x => x.TenantId == Tenant(ctx)).OrderByDescending(x => x.CreatedAt).ToListAsync()));
+{
+    var tenant = Tenant(ctx);
+    return Results.Ok(await db.Batches.Where(x => x.TenantId == tenant).OrderByDescending(x => x.CreatedAt).ToListAsync());
+});
 api.MapPost("/batches", async (HttpContext ctx, GedDbContext db, NameRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest();
@@ -190,7 +193,10 @@ api.MapPost("/batches/{id:guid}/close", async (Guid id, HttpContext ctx, GedDbCo
 });
 
 api.MapGet("/locations", async (HttpContext ctx, GedDbContext db) =>
-    Results.Ok(await db.Locations.Where(x => x.TenantId == Tenant(ctx)).OrderBy(x => x.Name).ToListAsync()));
+{
+    var tenant = Tenant(ctx);
+    return Results.Ok(await db.Locations.Where(x => x.TenantId == tenant).OrderBy(x => x.Name).ToListAsync());
+});
 api.MapPost("/locations", async (HttpContext ctx, GedDbContext db, LocationRequest request) =>
 {
     var tenant = Tenant(ctx);
@@ -200,7 +206,10 @@ api.MapPost("/locations", async (HttpContext ctx, GedDbContext db, LocationReque
     db.Locations.Add(location); await db.SaveChangesAsync(); return Results.Created($"/api/locations/{location.Id}", location);
 });
 api.MapGet("/boxes", async (HttpContext ctx, GedDbContext db) =>
-    Results.Ok(await db.Boxes.Where(x => x.TenantId == Tenant(ctx)).OrderBy(x => x.Code).ToListAsync()));
+{
+    var tenant = Tenant(ctx);
+    return Results.Ok(await db.Boxes.Where(x => x.TenantId == tenant).OrderBy(x => x.Code).ToListAsync());
+});
 api.MapPost("/boxes", async (HttpContext ctx, GedDbContext db, BoxRequest request) =>
 {
     var tenant = Tenant(ctx);
