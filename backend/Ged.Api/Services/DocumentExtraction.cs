@@ -32,7 +32,8 @@ public sealed class DocumentExtraction
         ["numero_apolice"] = ["Número da apólice", "Nº da apólice", "Apólice"],
         ["seguradora"] = ["Seguradora", "Companhia seguradora"],
         ["segurado"] = ["Segurado", "Nome do segurado"],
-        ["cpf_cnpj"] = ["CPF/CNPJ", "CPF", "CNPJ"],
+        ["cpf_cnpj"] = ["CPF/CNPJ", "CPF/CNP)", "CPF/CNP]", "CPF", "CNPJ"],
+        ["coberturas"] = ["Coberturas"],
         ["placa"] = ["Placa", "Placa do veículo"],
         ["renavam"] = ["RENAVAM"],
         ["chassi"] = ["Chassi"],
@@ -70,9 +71,10 @@ public sealed class DocumentExtraction
             foreach (var label in candidates.Where(x => !string.IsNullOrWhiteSpace(x))
                          .Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                value = FindLabeledValue(lines, label, labels);
-                if (value == null && columnValues.TryGetValue(NormalizeLabel(label), out var mapped))
+                if (columnValues.TryGetValue(NormalizeLabel(label), out var mapped))
                     value = mapped;
+                else
+                    value = FindLabeledValue(lines, label, labels);
                 if (!string.IsNullOrWhiteSpace(value))
                 {
                     source = "label";
@@ -123,7 +125,8 @@ public sealed class DocumentExtraction
             if (!TryLabel(lines[i], label, out var value)) continue;
             if (value.Length > 0 && !IsFieldLabel(value, knownLabels)) return value;
             // A value may be on the next non-empty line, but only if it is NOT another label.
-            if (i + 1 < lines.Length && !IsFieldLabel(lines[i + 1], knownLabels)
+            if (i + 1 < lines.Length && (i == 0 || !IsFieldLabel(lines[i - 1], knownLabels))
+                && !IsFieldLabel(lines[i + 1], knownLabels)
                 && !LooksLikeOtherLabel(lines[i + 1]))
                 return lines[i + 1];
         }
@@ -152,6 +155,10 @@ public sealed class DocumentExtraction
             if (count < 2) { start = end - 1; continue; }
             var values = new List<string>();
             var cursor = end;
+            // Test PDFs sometimes place the disclaimer between the label column and values.
+            while (cursor < lines.Length && (lines[cursor].StartsWith("Este arquivo é uma simulação", StringComparison.OrdinalIgnoreCase)
+                || lines[cursor].StartsWith("cobertura ou apólice emitida", StringComparison.OrdinalIgnoreCase)
+                || lines[cursor].StartsWith("cobertura ou apólice", StringComparison.OrdinalIgnoreCase))) cursor++;
             while (cursor < lines.Length && values.Count < count
                 && !IsFieldLabel(lines[cursor], labels))
             {
