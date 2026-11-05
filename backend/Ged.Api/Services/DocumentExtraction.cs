@@ -53,7 +53,7 @@ public sealed class DocumentExtraction
             .Concat(Aliases.Values.SelectMany(x => x))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var lines = text.Split(new[] { "\\r\\n", "\\n", "\\r" }, StringSplitOptions.None);
+        var lines = text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
         var result = new Dictionary<string, FieldResult>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var f in definitions)
@@ -86,7 +86,7 @@ public sealed class DocumentExtraction
     private static string? FindLabeledValue(string[] lines, string label, string[] knownLabels)
     {
         // Never use \\s here: it consumes line breaks and shifts values to the next field.
-        var pattern = @"^\\s*" + Regex.Escape(label) + @"\\s*[:=–-]\\s*(.*)$";
+        var pattern = @"^\s*" + Regex.Escape(label) + @"\s*[:=–-]\s*(.*)$";
         try
         {
             for (var i = 0; i < lines.Length; i++)
@@ -106,7 +106,7 @@ public sealed class DocumentExtraction
 
     private static bool IsFieldLabel(string value, string[] knownLabels)
     {
-        var trimmed = value.Trim().TrimEnd(':', '=', ' ', '\\t');
+        var trimmed = value.Trim().TrimEnd(':', '=', ' ', '\t');
         return knownLabels.Any(label => string.Equals(trimmed, label, StringComparison.OrdinalIgnoreCase));
     }
 
