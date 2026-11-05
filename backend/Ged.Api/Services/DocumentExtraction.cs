@@ -49,65 +49,122 @@ public sealed class DocumentExtraction
     public Dictionary<string, FieldResult> Extract(string text, IEnumerable<FieldDefinition> fields)
     {
         var definitions = fields.ToList();
+        var lines = text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None)
+            .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
         var labels = definitions.SelectMany(f => new[] { f.Label, f.Anchor ?? "" })
             .Concat(Aliases.Values.SelectMany(x => x))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var lines = text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
         var result = new Dictionary<string, FieldResult>(StringComparer.OrdinalIgnoreCase);
+        var columnValues = FindSeparatedColumnValues(lines, labels);
 
-        foreach (var f in definitions)
+        foreach (var field in definitions)
         {
+            var candidates = new List<string>();
+            if (Aliases.TryGetValue(field.Key, out var aliases)) candidates.AddRange(aliases);
+            if (!string.IsNullOrWhiteSpace(field.Anchor)) candidates.Add(field.Anchor);
+            candidates.Add(field.Label);
             string? value = null;
-            if (!string.IsNullOrWhiteSpace(f.Regex)) value = Match(text, f.Regex);
-            if (string.IsNullOrWhiteSpace(value))
+            string source = "not-found";
+
+            foreach (var label in candidates.Where(x => !string.IsNullOrWhiteSpace(x))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var candidates = new List<string>();
-                if (Aliases.TryGetValue(f.Key, out var aliases)) candidates.AddRange(aliases);
-                if (!string.IsNullOrWhiteSpace(f.Anchor)) candidates.Add(f.Anchor);
-                if (!string.IsNullOrWhiteSpace(f.Label)) candidates.Add(f.Label);
-                foreach (var label in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+                value = FindLabeledValue(lines, label, labels);
+                if (value == null && columnValues.TryGetValue(NormalizeLabel(label), out var mapped))
+                    value = mapped;
+                if (!string.IsNullOrWhiteSpace(value))
                 {
-                    value = FindLabeledValue(lines, label, labels);
-                    if (!string.IsNullOrWhiteSpace(value)) break;
+                    source = "label";
+                    break;
                 }
             }
-            if (string.IsNullOrWhiteSpace(value))
+
+            // Custom regexes are a fallback only: legacy patterns can match 'Segurado'
+            // inside 'Seguradora' and cross line boundaries into the next label.
+            if (string.IsNullOrWhiteSpace(value) && !string.IsNullOrWhiteSpace(field.Regex))
             {
-                var predefined = Defaults.FirstOrDefault(x => x.Key.Equals(f.Key, StringComparison.OrdinalIgnoreCase));
-                if (predefined.Pattern != null) value = Match(text, predefined.Pattern);
+                var match = Match(text, field.Regex);
+                if (!string.IsNullOrWhiteSpace(match) && !IsFieldLabel(match, labels))
+                {
+                    value = match;
+                    source = "regex";
+                }
             }
-            result[f.Key] = new FieldResult(value?.Trim() ?? "", string.IsNullOrWhiteSpace(value) ? 0 : 0.75,
-                string.IsNullOrWhiteSpace(value) ? "not-found" : "regex-or-anchor");
+            result[field.Key] = new FieldResult(value?.Trim() ?? "",
+                string.IsNullOrWhiteSpace(value) ? 0 : 0.75, source);
         }
         return result;
     }
 
+    private static string NormalizeLabel(string label) =>
+        label.Trim().TrimEnd(':', '=', ' ', '\t').ToUpperInvariant();
+
+    private static bool TryLabel(string line, string label, out string remainder)
+    {
+        remainder = "";
+        if (!line.StartsWith(label, StringComparison.OrdinalIgnoreCase)) return false;
+        var tail = line[label.Length..];
+        if (tail.Length == 0) return true;
+        // A word boundary is essential: "Segurado" must never match "Seguradora".
+        if (char.IsLetterOrDigit(tail[0])) return false;
+        tail = tail.TrimStart();
+        if (tail.Length > 0 && (tail[0] == ':' || tail[0] == '=' || tail[0] == '–' || tail[0] == '-'))
+            tail = tail[1..].TrimStart();
+        else if (tail.Length > 0) return false;
+        remainder = tail.Trim();
+        return true;
+    }
+
     private static string? FindLabeledValue(string[] lines, string label, string[] knownLabels)
     {
-        // Never use \\s here: it consumes line breaks and shifts values to the next field.
-        var pattern = @"^\s*" + Regex.Escape(label) + @"\s*[:=–-]\s*(.*)$";
-        try
+        for (var i = 0; i < lines.Length; i++)
         {
-            for (var i = 0; i < lines.Length; i++)
-            {
-                var match = Regex.Match(lines[i], pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, RegexTimeout);
-                if (!match.Success) continue;
-                var candidate = match.Groups[1].Value.Trim();
-                if (candidate.Length == 0 && i + 1 < lines.Length)
-                    candidate = lines[i + 1].Trim();
-                if (candidate.Length == 0 || IsFieldLabel(candidate, knownLabels)) continue;
-                return candidate.Length <= 200 ? candidate : candidate[..200];
-            }
+            if (!TryLabel(lines[i], label, out var value)) continue;
+            if (value.Length > 0 && !IsFieldLabel(value, knownLabels)) return value;
+            // A value may be on the next non-empty line, but only if it is NOT another label.
+            if (i + 1 < lines.Length && !IsFieldLabel(lines[i + 1], knownLabels)
+                && !LooksLikeOtherLabel(lines[i + 1]))
+                return lines[i + 1];
         }
-        catch (RegexMatchTimeoutException) { }
         return null;
     }
 
-    private static bool IsFieldLabel(string value, string[] knownLabels)
+    private static bool LooksLikeOtherLabel(string line) =>
+        Regex.IsMatch(line, @"^[\p{L}][\p{L}\p{N} /().º-]{1,65}:\s*",
+            RegexOptions.CultureInvariant, RegexTimeout);
+
+    private static bool IsFieldLabel(string value, string[] labels) =>
+        labels.Any(label => TryLabel(value, label, out var rest) && rest.Length == 0);
+
+    // Some PDF text extractors output the entire label column before the value column.
+    // Map only a contiguous sequence of empty labels to an equally sized sequence of
+    // values, rather than assigning each label the following label as its value.
+    private static Dictionary<string, string> FindSeparatedColumnValues(string[] lines, string[] labels)
     {
-        var trimmed = value.Trim().TrimEnd(':', '=', ' ', '\t');
-        return knownLabels.Any(label => string.Equals(trimmed, label, StringComparison.OrdinalIgnoreCase));
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var start = 0; start < lines.Length; start++)
+        {
+            if (!IsFieldLabel(lines[start], labels)) continue;
+            var end = start;
+            while (end < lines.Length && IsFieldLabel(lines[end], labels)) end++;
+            var count = end - start;
+            if (count < 2) { start = end - 1; continue; }
+            var values = new List<string>();
+            var cursor = end;
+            while (cursor < lines.Length && values.Count < count
+                && !IsFieldLabel(lines[cursor], labels))
+            {
+                if (LooksLikeOtherLabel(lines[cursor])) break;
+                values.Add(lines[cursor]);
+                cursor++;
+            }
+            if (values.Count == count)
+                for (var j = 0; j < count; j++)
+                    result[NormalizeLabel(lines[start + j])] = values[j];
+            start = end - 1;
+        }
+        return result;
     }
 
     public DocumentType? MatchType(string text, IEnumerable<DocumentType> types)
