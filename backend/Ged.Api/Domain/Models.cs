@@ -23,7 +23,8 @@ public sealed class DocumentType : TenantOwned
     public List<string> Keywords => JsonSerializer.Deserialize<List<string>>(KeywordsJson, JsonOptions.Default) ?? [];
 }
 
-public sealed record FieldDefinition(string Key, string Label, string DataType, bool Required, string? Regex = null, string? Anchor = null);
+public sealed record FieldDefinition(string Key, string Label, string DataType, bool Required, string? Regex = null, string? Anchor = null, List<LayoutAnchor>? Layouts = null);
+public sealed record LayoutAnchor(string Marker, string Anchor);
 public sealed record FieldResult(string Value, double Confidence, string Source);
 
 public sealed class GedDocument : TenantOwned

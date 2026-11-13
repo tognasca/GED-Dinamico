@@ -86,11 +86,40 @@ api.MapPost("/types", async (HttpContext ctx, GedDbContext db, CreateTypeRequest
     return Results.Created($"/api/types/{type.Id}", new { type.Id, type.Name });
 });
 
-api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId, string? q) =>
+api.MapPost("/types/preview", async (HttpContext ctx, GedDbContext db, PreviewTypeRequest request, DocumentExtraction extractor) =>
+{
+    var tenant = Tenant(ctx);
+    var doc = await db.Documents.AsNoTracking().FirstOrDefaultAsync(d => d.TenantId == tenant && d.Id == request.DocumentId);
+    if (doc is null) return Results.NotFound();
+    if (doc.OcrStatus != "Completed" || request.Fields is null || request.Fields.Count is < 1 or > 100 ||
+        request.Fields.Select(f => f.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Fields.Count)
+        return Results.BadRequest(new { error = "Selecione um documento processado e campos com chaves únicas." });
+    return Results.Ok(extractor.Extract(doc.OcrText, request.Fields));
+});
+
+api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId, string? q, Guid? typeId, string? field, string? value) =>
 {
     var tenant = Tenant(ctx);
     var docs = db.Documents.AsNoTracking().Where(x => x.TenantId == tenant);
     if (batchId.HasValue) docs = docs.Where(x => x.BatchId == batchId.Value);
+    if (typeId.HasValue) docs = docs.Where(x => x.DocumentTypeId == typeId.Value);
+    if (!string.IsNullOrWhiteSpace(field) && !string.IsNullOrWhiteSpace(value))
+    {
+        if (!typeId.HasValue || !await db.DocumentTypes.AsNoTracking()
+            .AnyAsync(t => t.Id == typeId.Value && t.TenantId == tenant))
+            return Results.BadRequest(new { error = "Selecione um tipo de documento válido." });
+        var matches = new List<GedDocument>();
+        await foreach (var doc in docs.Where(d => d.Status == "Indexed" &&
+            (q == null || q == "" || d.FileName.Contains(q) || d.OcrText.Contains(q)))
+            .OrderByDescending(d => d.CreatedAt).AsAsyncEnumerable().WithCancellation(ctx.RequestAborted))
+        {
+            var fields = JsonSerializer.Deserialize<Dictionary<string, FieldResult>>(doc.ValuesJson, JsonOptions.Default);
+            if (fields?.TryGetValue(field, out var result) == true &&
+                result.Value.Contains(value, StringComparison.OrdinalIgnoreCase)) matches.Add(doc);
+            if (matches.Count == 100) break;
+        }
+        return Results.Ok(matches.Select(ViewDocument));
+    }
     if (!string.IsNullOrWhiteSpace(q)) docs = docs.Where(x => x.FileName.Contains(q) || x.OcrText.Contains(q));
     return Results.Ok((await docs.OrderByDescending(x => x.CreatedAt).Take(100).ToListAsync()).Select(ViewDocument));
 });
@@ -163,6 +192,14 @@ api.MapPost("/documents/{id:guid}/confirm", async (Guid id, ConfirmRequest reque
     foreach (var item in request.Values) values[item.Key] = new FieldResult(item.Value ?? "", 1, "human-reviewed");
     if (type.Fields.Any(f => f.Required && (!values.TryGetValue(f.Key, out var v) || string.IsNullOrWhiteSpace(v.Value))))
         return Results.BadRequest(new { error = "Required fields missing" });
+    var culture = System.Globalization.CultureInfo.GetCultureInfo("pt-BR");
+    var invalid = type.Fields.Where(f => values.TryGetValue(f.Key, out var v) && !string.IsNullOrWhiteSpace(v.Value) &&
+        (f.DataType == "date" && !DateOnly.TryParseExact(v.Value.Trim(), new[] { "d/M/yyyy", "yyyy-MM-dd" },
+            culture, System.Globalization.DateTimeStyles.None, out _) ||
+         f.DataType == "currency" && !decimal.TryParse(v.Value, System.Globalization.NumberStyles.Currency, culture, out _)))
+        .Select(f => f.Label).ToArray();
+    if (invalid.Length > 0)
+        return Results.BadRequest(new { error = $"Revise o formato: {string.Join(", ", invalid)}" });
     doc.ValuesJson = JsonSerializer.Serialize(values, JsonOptions.Default);
     doc.Status = "Indexed";
     await db.SaveChangesAsync();
@@ -266,6 +303,7 @@ using (var scope = app.Services.CreateScope())
 }
 app.Run();
 
+public sealed record PreviewTypeRequest(Guid DocumentId, List<FieldDefinition> Fields);
 public sealed record CreateTypeRequest(string Name, List<FieldDefinition> Fields, List<string>? Keywords);
 public sealed record ApplyTemplateRequest(Guid DocumentTypeId);
 public sealed record ConfirmRequest(Dictionary<string, string?> Values);

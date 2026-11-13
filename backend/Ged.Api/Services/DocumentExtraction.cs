@@ -20,11 +20,19 @@ public sealed class DocumentExtraction
         ("conta", "Conta", "text", @"conta\s*[:=]?\s*([\d-]+)")
     ];
 
-    public List<object> Suggest(string text) => Defaults.Select(x =>
+    public IEnumerable<object> Suggest(string text) => Defaults.Select(x =>
     {
         var found = Match(text, x.Pattern);
         return new { key = x.Key, label = x.Label, dataType = x.DataType, value = found, suggested = found != null };
-    }).Where(x => x.suggested).Cast<object>().ToList();
+    }).Where(x => x.suggested).Cast<object>().Concat(SuggestLabels(text));
+
+    private static IEnumerable<object> SuggestLabels(string text)
+    {
+        return Regex.Matches(text, @"(?m)^ *([\p{L}][\p{L}\p{N} /_-]{2,48}):[ \t]*(\S[^\r\n]{0,119})")
+            .Cast<Match>().DistinctBy(m => m.Groups[1].Value.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Take(30).Select(m => new { key = "", label = m.Groups[1].Value.Trim(), dataType = "text",
+                value = m.Groups[2].Value.Trim(), suggested = true });
+    }
 
     // Common labels found on Brazilian insurance policies. The key is the normalized field key.
     private static readonly Dictionary<string, string[]> Aliases = new(StringComparer.OrdinalIgnoreCase)
@@ -52,7 +60,10 @@ public sealed class DocumentExtraction
         var definitions = fields.ToList();
         var lines = text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None)
             .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
-        var labels = definitions.SelectMany(f => new[] { f.Label, f.Anchor ?? "" })
+        var layoutAnchors = definitions.ToDictionary(f => f.Key, f => (f.Layouts ?? [])
+            .Where(rule => !string.IsNullOrWhiteSpace(rule.Marker) && text.Contains(rule.Marker, StringComparison.OrdinalIgnoreCase))
+            .Select(rule => rule.Anchor).ToArray());
+        var labels = definitions.SelectMany(f => new[] { f.Label, f.Anchor ?? "" }.Concat(layoutAnchors[f.Key]))
             .Concat(Aliases.Values.SelectMany(x => x))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -61,7 +72,13 @@ public sealed class DocumentExtraction
 
         foreach (var field in definitions)
         {
-            var candidates = new List<string>();
+            var matchingAnchors = layoutAnchors[field.Key].Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (matchingAnchors.Length > 1)
+            {
+                result[field.Key] = new FieldResult("", 0, "ambiguous-layout");
+                continue;
+            }
+            var candidates = new List<string>(matchingAnchors);
             if (Aliases.TryGetValue(field.Key, out var aliases)) candidates.AddRange(aliases);
             if (!string.IsNullOrWhiteSpace(field.Anchor)) candidates.Add(field.Anchor);
             candidates.Add(field.Label);

@@ -22,6 +22,7 @@ export type Field = {
   dataType: string;
   required: boolean;
   regex?: string | null;
+  layouts?: { marker: string; anchor: string }[];
   anchor?: string | null;
 };
 
