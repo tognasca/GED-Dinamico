@@ -69,3 +69,9 @@
 .review-image { min-width: 0; display: grid; place-items: center; gap: .75rem; padding: 1rem; background: #edf2f1; border-radius: 8px; }
 .review-image img { display: block; max-width: 100%; max-height: 68dvh; object-fit: contain; }
 .review-image a { color: #005653; }
+
+.wizard-step { color: #005653; font-weight: 700; margin-top: 1rem; }
+.entry-options .field-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; }
+@media (max-width: 640px) {
+  .entry-options .field-row { grid-template-columns: minmax(0, 1fr) auto; }
+}

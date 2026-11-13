@@ -48,6 +48,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [modelStep, setModelStep] = useState(1);
   const [modelName, setModelName] = useState('');
   const [keywords, setKeywords] = useState('');
   const [fields, setFields] = useState<Field[]>([]);
@@ -119,7 +120,7 @@ function App() {
       const form = new FormData(); form.append('file', file);
       const suffix = batchId ? `?batchId=${batchId}` : '';
       const doc = await api<GedDocument>(`/documents/upload${suffix}`, { method: 'POST', body: form });
-      setSelected(doc); setChosenTemplate(doc.documentTypeId ?? ''); setCorrections({}); setTestId(doc.id); setPreview(undefined); setFile(null); setView(doc.documentTypeId ? 'review' : 'capture');
+      setSelected(doc); setChosenTemplate(doc.documentTypeId ?? ''); setCorrections({}); setTestId(doc.id); setPreview(undefined); setModelStep(1); setFile(null); setView(doc.documentTypeId ? 'review' : 'capture');
       setFields(prepareFields((Array.isArray(doc.suggestions) ? doc.suggestions as Suggestion[] : []).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label }))));
       setNotice(doc.ocrStatus === 'Completed' ? doc.documentTypeId ? 'Confira os campos preenchidos.' : 'Escolha o tipo do documento para continuar.' : 'Documento salvo, mas o OCR precisa de atenção.');
     });
@@ -129,7 +130,7 @@ function App() {
       const values = await api<Record<string, FieldResult>>('/types/preview', {
         method: 'POST', body: JSON.stringify({ documentId: testId, fields: prepareFields(fields) }),
       });
-      setPreview({ signature, values });
+      setPreview({ signature, values }); setModelStep(3);
     });
   }
   async function searchLibrary() {
@@ -146,7 +147,7 @@ function App() {
   async function createType() {
     await perform(async () => {
       const result = await api<{ id: string }>('/types', { method: 'POST', body: JSON.stringify({ name: modelName, keywords: keywords.split(',').map(x => x.trim()).filter(Boolean), fields: prepareFields(fields) }) });
-      setChosenTemplate(result.id); setModelName(''); setNotice('Modelo criado. Aplique-o ao documento para extrair os campos.');
+      setChosenTemplate(result.id); setModelName(''); setModelStep(1); setNotice('Tipo salvo. Clique em Continuar para conferência.');
     });
   }
   async function applyTemplate(id: string) {
@@ -164,7 +165,7 @@ function App() {
     });
   }
   function openDoc(doc: GedDocument) {
-    setSelected(doc); setTestId(doc.id); setPreview(undefined); setView(doc.documentTypeId ? 'review' : 'capture'); setCorrections({}); setChosenTemplate(doc.documentTypeId || '');
+    setSelected(doc); setTestId(doc.id); setPreview(undefined); setModelStep(1); setView(doc.documentTypeId ? 'review' : 'capture'); setCorrections({}); setChosenTemplate(doc.documentTypeId || '');
     setFields(Array.isArray(doc.suggestions) ? (doc.suggestions as Suggestion[]).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label })) : []);
   }
   const menu: { id: View; label: string }[] = [
@@ -241,16 +242,30 @@ function App() {
             {selected.documentTypeId && <span className="model-tag"><CheckCircle2 size={15}/> Modelo aplicado: {types.find(t=>t.id===selected.documentTypeId)?.name ?? 'Existente'}</span>}
             <label className="field-label">Tipo de documento</label><div className="inline"><select value={chosenTemplate} onChange={e=>setChosenTemplate(e.target.value)}><option value="">Selecione o tipo</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><button className="secondary" disabled={!chosenTemplate || busy || selected.ocrStatus!=='Completed'} onClick={()=>void applyTemplate(chosenTemplate)}>Continuar para conferência</button></div>
             {current && <button className="secondary full" onClick={()=>setView('review')}>Conferir documento</button>}
-            <details className="entry-options"><summary>Criar um novo tipo de documento</summary>
+            <details className="entry-options"><summary>Criar tipo a partir deste exemplo</summary>
+            <p className="wizard-step">Passo {modelStep} de 3</p>
+            {modelStep === 1 && <>
             <label className="control"><span>Nome do modelo</span><input placeholder="Ex.: Cheque bancário" value={modelName} onChange={e=>setModelName(e.target.value)}/></label>
-            <label className="control"><span>Palavras-chave para reconhecer automaticamente</span><input placeholder="Ex.: cheque, banco, agência" value={keywords} onChange={e=>setKeywords(e.target.value)}/></label>
-            <div className="suggestions"><div className="subheading">Campos sugeridos pelo OCR <span>{suggestions.length}</span></div>{suggestions.length===0 && <p className="muted">Nenhum campo conhecido detectado. Você pode adicionar campos manualmente.</p>}
-              {fields.map((field,i)=><div className="field-row" key={i}><input className="field-key" value={field.key} placeholder="chave" onChange={e=>setFields(f=>f.map((x,j)=>j===i?{...x,key:e.target.value}:x))}/><input value={field.label} placeholder="Rótulo" onChange={e=>setFields(f=>f.map((x,j)=>j===i?{...x,label:e.target.value}:x))}/><select aria-label="Tipo do campo" value={field.dataType} onChange={e=>setFields(items=>items.map((x,j)=>j===i?{...x,dataType:e.target.value}:x))}><option value="text">Texto</option><option value="date">Data</option><option value="currency">Valor</option></select><label className="checkbox"><input type="checkbox" checked={field.required} onChange={e=>setFields(f=>f.map((x,j)=>j===i?{...x,required:e.target.checked}:x))}/>Obrig.</label><button className="icon-button" title="Remover campo" onClick={()=>setFields(s=>s.filter((_,j)=>j!==i))}><XCircle size={17}/></button><details><summary>Rótulos por layout</summary>{field.layouts?.map((layout,k)=><div className="inline" key={k}>{(['marker','anchor'] as const).map(key=><input key={key} aria-label={key==='marker'?'Identificador do layout':'Rótulo no PDF'} placeholder={key==='marker'?'Ex.: Porto Seguro':'Ex.: Nº da apólice'} value={layout[key]} onChange={e=>setFields(items=>items.map((x,j)=>j===i?{...x,layouts:x.layouts?.map((rule,n)=>n===k?{...rule,[key]:e.target.value}:rule)}:x))}/>)}<button onClick={()=>setFields(items=>items.map((x,j)=>j===i?{...x,layouts:x.layouts?.filter((_,n)=>n!==k)}:x))}>Remover</button></div>)}<button onClick={()=>setFields(items=>items.map((x,j)=>j===i?{...x,layouts:[...(x.layouts??[]),{marker:'',anchor:''}]}:x))}>Adicionar layout</button></details></div>)}
+            <button className="primary" disabled={!modelName.trim()} onClick={()=>setModelStep(2)}>Continuar</button></>}
+            {modelStep === 2 && <>
+            <h3>Quais informações você quer guardar?</h3>
+            <p>Edite as sugestões, remova o que sobra ou adicione um campo.</p>
+            <div className="suggestions"><div className="subheading">Informações encontradas <span>{suggestions.length}</span></div>{suggestions.length===0 && <p className="muted">Adicione as informações que deseja guardar, como número do contrato ou data.</p>}
+              {fields.map((field,i)=><div className="field-row" key={i}><input value={field.label} aria-label="Nome da informação" placeholder="Ex.: Número da apólice" onChange={e=>setFields(f=>f.map((x,j)=>j===i?{...x,label:e.target.value}:x))}/><select aria-label="Tipo do campo" value={field.dataType} onChange={e=>setFields(items=>items.map((x,j)=>j===i?{...x,dataType:e.target.value}:x))}><option value="text">Texto</option><option value="date">Data</option><option value="currency">Valor</option></select><label className="checkbox"><input type="checkbox" checked={field.required} onChange={e=>setFields(f=>f.map((x,j)=>j===i?{...x,required:e.target.checked}:x))}/>Obrigatório</label><button className="icon-button" title="Remover campo" onClick={()=>setFields(s=>s.filter((_,j)=>j!==i))}><XCircle size={17}/></button><details><summary>Opções para documentos com formatos diferentes</summary>{field.layouts?.map((layout,k)=><div className="inline" key={k}>{(['marker','anchor'] as const).map(key=><input key={key} aria-label={key==='marker'?'Identificador do layout':'Rótulo no PDF'} placeholder={key==='marker'?'Ex.: Porto Seguro':'Ex.: Nº da apólice'} value={layout[key]} onChange={e=>setFields(items=>items.map((x,j)=>j===i?{...x,layouts:x.layouts?.map((rule,n)=>n===k?{...rule,[key]:e.target.value}:rule)}:x))}/>)}<button onClick={()=>setFields(items=>items.map((x,j)=>j===i?{...x,layouts:x.layouts?.filter((_,n)=>n!==k)}:x))}>Remover</button></div>)}<button onClick={()=>setFields(items=>items.map((x,j)=>j===i?{...x,layouts:[...(x.layouts??[]),{marker:'',anchor:''}]}:x))}>Adicionar layout</button></details></div>)}
               <button className="text-button" onClick={()=>setFields(s=>[...s,defaultField()])}><Plus size={16}/> Adicionar campo</button></div>
-            <label className="control"><span>PDF processado para testar</span><select value={testId} onChange={e=>setTestId(e.target.value)}><option value="">Selecione</option>{documents.filter(d=>d.ocrStatus==='Completed').map(d=><option key={d.id} value={d.id}>{d.fileName}</option>)}</select></label>
-            <button className="secondary" disabled={busy || !testId || !fields.length} onClick={()=>void testModel()}>Testar extração</button>
+            <details className="entry-options"><summary>Opções de reconhecimento</summary>
+              <label className="control"><span>Palavras que ajudam a reconhecer este tipo</span><input placeholder="Ex.: contrato, locação" value={keywords} onChange={e=>setKeywords(e.target.value)}/></label>
+            <label className="control"><span>Testar com outro arquivo</span><select value={testId} onChange={e=>setTestId(e.target.value)}><option value="">Selecione</option>{documents.filter(d=>d.ocrStatus==='Completed').map(d=><option key={d.id} value={d.id}>{d.fileName}</option>)}</select></label>
+            </details>
+            <div className="inline"><button className="secondary" onClick={()=>setModelStep(1)}>Voltar</button>
+            <button className="primary" disabled={busy || !testId || !fields.length || fields.some(f=>!f.label.trim())} onClick={()=>void testModel()}>Conferir resultado</button></div></>}
+            {modelStep === 3 && <>
+            <h3>Confira o que o GED encontrou</h3>
+            <p>Se faltar algum valor, você pode voltar e ajustar os campos ou salvar o tipo e preencher na conferência.</p>
             {preview?.signature===signature && <dl>{prepareFields(fields).map(f=><React.Fragment key={f.key}><dt>{f.label}</dt><dd>{preview.values[f.key]?.value || 'Campo vazio'}</dd></React.Fragment>)}</dl>}
-            <button className="primary full" disabled={busy || preview?.signature!==signature || !modelName.trim() || fields.length===0} onClick={()=>void createType()}><Sparkles size={17}/> Salvar modelo dinâmico</button>
+            <button className="secondary" onClick={()=>setModelStep(2)}>Voltar e ajustar</button>
+            <button className="primary full" disabled={busy || preview?.signature!==signature || !modelName.trim() || fields.length===0} onClick={()=>void createType()}><Sparkles size={17}/> Salvar tipo de documento</button>
+            </>}
             </details>
             <details className="entry-options"><summary>Ver arquivo e texto reconhecido</summary>
             <div className="preview"><FileText size={27}/><div><strong>{selected.fileName}</strong><span>{selected.ocrStatus} · {(selected.fileSize/1024).toFixed(1)} KB</span></div><a href={`${API_URL}/api/documents/${selected.id}/file`} onClick={e=>{e.preventDefault();void fetch(`${API_URL}/api/documents/${selected.id}/file`, {headers:{'X-Tenant-Id':DEMO_TENANT}}).then(r=>{if(!r.ok)throw new Error('Falha ao abrir arquivo');return r.blob()}).then(b=>{const url=URL.createObjectURL(b);window.open(url,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(url),60000)}).catch(err=>setError(String(err)))}}>Abrir</a></div>
