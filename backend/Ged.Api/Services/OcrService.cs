@@ -83,9 +83,6 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         form.Add(upload, "files", "document.pdf");
         form.Add(new StringContent("text"), "to_formats");
         form.Add(new StringContent("true"), "do_ocr");
-        form.Add(new StringContent("tesseract"), "ocr_engine");
-        form.Add(new StringContent("por"), "ocr_lang");
-        form.Add(new StringContent("eng"), "ocr_lang");
         form.Add(new StringContent("1"), "page_range");
         form.Add(new StringContent("30"), "page_range");
         var endpoint = configuration["Ocr:DoclingUrl"]!.TrimEnd('/') + "/v1/convert/file";

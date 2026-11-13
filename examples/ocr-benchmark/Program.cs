@@ -26,11 +26,9 @@ foreach (var (file, truth) in expected)
     foreach (var format in new[] { "text", "json" })
         form.Add(new StringContent(format), "to_formats");
     form.Add(new StringContent("true"), "do_ocr");
-    form.Add(new StringContent("tesseract"), "ocr_engine");
-    foreach (var language in new[] { "por", "eng" })
-        form.Add(new StringContent(language), "ocr_lang");
     using var response = await client.PostAsync(endpoint, form);
-    response.EnsureSuccessStatusCode();
+    if (!response.IsSuccessStatusCode)
+        throw new HttpRequestException($"{file}: {endpoint} retornou HTTP {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
     using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
     if (result.RootElement.GetProperty("status").GetString() != "success")
         throw new InvalidDataException($"Conversão incompleta: {file}");

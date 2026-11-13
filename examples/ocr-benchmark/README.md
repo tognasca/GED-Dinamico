@@ -9,7 +9,7 @@ dotnet run --project Benchmark.csproj
 ```
 
 O teste usa um Docling Serve acessível em `http://localhost:5001`. Configure
-`DOCLING_URL` para outro endereço. O serviço precisa ter OCR Tesseract em português e inglês.
+`DOCLING_URL` para outro endereço. O teste usa o motor de OCR padrão do Docling.
 
 São 12 PDFs sintéticos, seis digitais e seis escaneados, em três layouts.
 Cada PDF é enviado uma vez ao Docling. A comparação usa o mesmo extrator .NET
