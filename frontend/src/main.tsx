@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, Boxes, CheckCircle2, ChevronRight, CloudUpload, Database, FileSearch, FileText, FolderOpen, Layers, LoaderCircle, Plus, ScanLine, Settings2, Sparkles, XCircle } from 'lucide-react';
+import { Archive, Boxes, CheckCircle2, ChevronRight, CloudUpload, FileSearch, FileText, FolderOpen, Layers, LoaderCircle, Plus, ScanLine, Settings2, Sparkles, XCircle } from 'lucide-react';
 import { api, API_URL, DEMO_TENANT, type Batch, type DocumentType, type Field, type FieldResult, type GedDocument, type Suggestion } from './api';
 import './style.css';
 
@@ -167,35 +167,35 @@ function App() {
     setSelected(doc); setTestId(doc.id); setPreview(undefined); setView(doc.documentTypeId ? 'review' : 'capture'); setCorrections({}); setChosenTemplate(doc.documentTypeId || '');
     setFields(Array.isArray(doc.suggestions) ? (doc.suggestions as Suggestion[]).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label })) : []);
   }
-  const menu: { id: View; label: string; icon: React.ReactNode }[] = [
-    { id: 'capture', label: 'Central de digitalização', icon: <ScanLine size={18} /> },
-    { id: 'documents', label: 'Documentos', icon: <FileSearch size={18} /> },
-    { id: 'models', label: 'Modelos dinâmicos', icon: <Layers size={18} /> },
-    { id: 'batches', label: 'Lotes', icon: <FolderOpen size={18} /> },
-    { id: 'physical', label: 'Arquivo físico', icon: <Boxes size={18} /> },
+  const menu: { id: View; label: string }[] = [
+    { id: 'capture', label: 'Entrada' },
+    { id: 'review', label: 'Conferência' },
+    { id: 'documents', label: 'Biblioteca' },
+    { id: 'models', label: 'Modelos' },
+    { id: 'batches', label: 'Lotes' },
+    { id: 'physical', label: 'Arquivo físico' },
   ];
+  const pendingDocuments = documents.filter(doc => doc.status === 'NeedsReview' || doc.status === 'AwaitingTemplate');
 
-  return <div className={view === 'review' ? 'app review-page' : 'app'}>
-    {view === 'review' && <header className="review-nav">
+  return <div className={view === 'review' ? 'app ged-shell review-page' : 'app ged-shell'}>
+    <header className="review-nav">
       <strong>GED <span>Dinâmico</span></strong>
       <nav aria-label="Navegação do GED">
-        <button onClick={()=>setView('capture')}>Entrada</button>
-        <button aria-current="page">Conferência</button>
-        <button onClick={()=>setView('documents')}>Biblioteca</button>
-        <button onClick={()=>setView('models')}>Modelos</button>
+        {menu.map(item => <button key={item.id} aria-current={view === item.id ? 'page' : undefined}
+          onClick={() => { if (item.id === 'review' && view !== 'review') { setSelected(null); setCorrections({}); } setView(item.id); }}>{item.label}</button>)}
       </nav>
-    </header>}
-    <aside className="sidebar"><div className="brand"><div className="brand-icon"><Database size={22}/></div><div><b>GED Dinâmico</b><small>Document intelligence</small></div></div>
-      <div className="sidebar-heading">WORKSPACE</div>
-      <nav>{menu.map(item => <button key={item.id} className={view === item.id ? 'nav active' : 'nav'} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span>{view === item.id && <ChevronRight size={15}/>}</button>)}</nav>
-      <div className="side-bottom"><Sparkles size={18}/><span>Primeiro modelo, depois automação.</span></div>
-    </aside>
+    </header>
     <main className="main">
-      <header className="top"><div><span className="crumb">GED / Painel operacional</span><h1>{menu.find(x => x.id === view)?.label}</h1></div><span className="environment">Ambiente de desenvolvimento</span></header>
       {error && <div className="alert error"><XCircle size={16}/>{error}<button onClick={() => setError('')}>×</button></div>}
       {notice && <div className="alert success"><CheckCircle2 size={16}/>{notice}<button onClick={() => setNotice('')}>×</button></div>}
-      <div className="stats"><div className="stat"><span>Documentos</span><strong>{documents.length}</strong><small>Capturados</small></div><div className="stat"><span>Modelos</span><strong>{types.length}</strong><small>Tipos configurados</small></div><div className="stat"><span>Para revisão</span><strong>{documents.filter(d => d.status === 'NeedsReview' || d.status === 'AwaitingTemplate').length}</strong><small>Necessitam conferência</small></div><div className="stat"><span>Indexados</span><strong>{documents.filter(d => d.status === 'Indexed').length}</strong><small>Disponíveis para consulta</small></div></div>
-            {view === 'review' && !current && <button className="secondary" onClick={()=>setView('capture')}>Voltar à entrada</button>}
+      {view === 'review' && !current && <section className="panel review-queue">
+        <h1>Documentos para conferir</h1>
+        {pendingDocuments.length ? <div className="items">{pendingDocuments.map(doc =>
+          <button className="item" key={doc.id} onClick={() => openDoc(doc)}>
+            <FileText size={20}/><span>{doc.fileName}</span>
+            <small>{doc.documentTypeId ? 'Conferir campos' : 'Escolher modelo'}</small><ChevronRight size={16}/>
+          </button>)}</div> : <p>Nenhum documento aguardando conferência.</p>}
+      </section>}
       {view === 'review' && selected && current && <section className="review">
               <header><h1>Conferir documento</h1><p>{selected.fileName}</p></header>
               {pdfUrl && <div className="review-tabs" role="group" aria-label="Visualização da conferência">
@@ -222,17 +222,20 @@ function App() {
               </div>
               <footer className="review-actions"><button className="secondary" onClick={()=>setView('capture')}>Alterar modelo</button><button className="primary" disabled={busy} onClick={()=>void confirmDocument()}><CheckCircle2 size={17}/> Confirmar e indexar</button></footer>
             </section>}
-      {view === 'capture' && <div className="workspace">
-        <section className="panel"><div className="panel-title"><div><h2>01. Importar documento</h2><p>Inicie o reconhecimento por OCR</p></div><CloudUpload size={22}/></div>
+      {view === 'capture' && <div className="entry">
+        <header className="entry-heading"><h1>Importar documento</h1>
+          <p>Envie um arquivo para reconhecer o texto e conferir os campos.</p>
+        </header>
+        <div className="entry-flow">
+        <section className="panel entry-upload">
           <label className="dropzone"><CloudUpload size={30}/><strong>{file ? file.name : 'Escolha um documento'}</strong><span>PDF, PNG, JPG, TIFF, WEBP ou TXT (teste) · Até 25 MB</span><input type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.txt" onChange={e=>setFile(e.target.files?.[0] ?? null)}/></label>
           <label className="field-label">Lote (opcional)</label><select value={batchId} onChange={e=>setBatchId(e.target.value)}><option value="">Sem lote</option>{batches.filter(x=>x.status==='Open').map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select>
-          <button className="primary full" disabled={!file || busy} onClick={() => void upload()}>{busy ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} Digitalizar e reconhecer</button>
+          <button className="primary full" disabled={!file || busy} onClick={() => void upload()}>{busy ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} Processar documento</button>
           {selected && <><div className="divider"/><div className="panel-title"><div><h2>Documento processado</h2><p>{selected.fileName}</p></div><span className="chip">{selected.status}</span></div>
             <div className="preview"><FileText size={27}/><div><strong>{selected.fileName}</strong><span>{selected.ocrStatus} · {(selected.fileSize/1024).toFixed(1)} KB</span></div><a href={`${API_URL}/api/documents/${selected.id}/file`} onClick={e=>{e.preventDefault();void fetch(`${API_URL}/api/documents/${selected.id}/file`, {headers:{'X-Tenant-Id':DEMO_TENANT}}).then(r=>{if(!r.ok)throw new Error('Falha ao abrir arquivo');return r.blob()}).then(b=>{const url=URL.createObjectURL(b);window.open(url,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(url),60000)}).catch(err=>setError(String(err)))}}>Abrir</a></div>
             <label className="field-label">Texto reconhecido</label><pre className="ocr-text">{selected.ocrText || 'Nenhum texto reconhecido.'}</pre></>}
         </section>
-        <section className="panel"><div className="panel-title"><div><h2>02. Ensinar ou aplicar modelo</h2><p>Campos 100% configuráveis</p></div><Settings2 size={21}/></div>
-          {!selected ? <div className="empty"><ScanLine size={38}/><strong>Pronto para aprender</strong><p>Digitalize um documento para detectar os campos e criar um modelo reutilizável.</p></div> : <>
+        {selected && <section className="panel"><div className="panel-title"><div><h2>Modelo do documento</h2></div><Settings2 size={21}/></div>
             {selected.documentTypeId && <span className="model-tag"><CheckCircle2 size={15}/> Modelo aplicado: {types.find(t=>t.id===selected.documentTypeId)?.name ?? 'Existente'}</span>}
             <label className="field-label">Aplicar um modelo já criado</label><div className="inline"><select value={chosenTemplate} onChange={e=>setChosenTemplate(e.target.value)}><option value="">Selecione um modelo</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><button className="secondary" disabled={!chosenTemplate || busy || selected.ocrStatus!=='Completed'} onClick={()=>void applyTemplate(chosenTemplate)}>Aplicar</button></div>
             {current && <button className="secondary full" onClick={()=>setView('review')}>Conferir documento</button>}
@@ -246,8 +249,11 @@ function App() {
             <button className="secondary" disabled={busy || !testId || !fields.length} onClick={()=>void testModel()}>Testar extração</button>
             {preview?.signature===signature && <dl>{prepareFields(fields).map(f=><React.Fragment key={f.key}><dt>{f.label}</dt><dd>{preview.values[f.key]?.value || 'Campo vazio'}</dd></React.Fragment>)}</dl>}
             <button className="primary full" disabled={busy || preview?.signature!==signature || !modelName.trim() || fields.length===0} onClick={()=>void createType()}><Sparkles size={17}/> Salvar modelo dinâmico</button>
-          </>}
-        </section>
+        </section>}
+        </div>
+        {!selected && <button className="secondary entry-pending" onClick={() => setView('review')}>
+          Ver documentos para conferir{pendingDocuments.length > 0 ? ` (${pendingDocuments.length})` : ''}
+        </button>}
       </div>}
       {view === 'documents' && <section className="panel"><div className="panel-title"><div><h2>Biblioteca documental</h2><p>Busca por tipo, campo indexado ou texto OCR</p></div><FileSearch size={21}/></div><input placeholder="Pesquisar documentos..." value={search} onChange={e=>setSearch(e.target.value)}/><div className="inline"><select aria-label="Tipo de documento" value={filterType} onChange={e=>{setFilterType(e.target.value);setFilterField('');setFilterValue('')}}><option value="">Todos os tipos</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>{filterType && <select aria-label="Campo indexado" value={filterField} onChange={e=>setFilterField(e.target.value)}><option value="">Qualquer campo</option>{types.find(t=>t.id===filterType)?.fields.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{filterField && <input aria-label="Valor do campo" value={filterValue} onChange={e=>setFilterValue(e.target.value)}/>}<button className="secondary" disabled={busy} onClick={()=>void searchLibrary()}>Buscar</button></div><div className="items">{(results ?? documents).map(d=><button className="item" key={d.id} onClick={()=>openDoc(d)}><FileText size={20}/><span><strong>{d.fileName}</strong><small>{new Date(d.createdAt).toLocaleString('pt-BR')}</small></span><span className="chip">{d.status}</span><ChevronRight size={15}/></button>)}</div></section>}
       {view === 'models' && <section className="panel"><div className="panel-title"><div><h2>Catálogo de modelos</h2><p>Estruturas criadas sem código</p></div><Layers size={22}/></div><div className="items">{types.length===0&&<p className="muted">Nenhum modelo criado. Vá à Central de digitalização para ensinar o primeiro.</p>}{types.map(t=><div className="item" key={t.id}><Layers size={20}/><span><strong>{t.name}</strong><small>{t.fields.map(f=>f.label).join(' · ')}</small></span><span className="chip">v{t.version}</span></div>)}</div></section>}

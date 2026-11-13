@@ -44,3 +44,20 @@
   .review-page .review-grid:has(iframe) { grid-template-columns: minmax(0, 1fr); }
   .review-page .review-actions { flex-wrap: wrap; }
 }
+
+.ged-shell { display: block; background: #fafaf9; color: #101820; }
+.ged-shell .main { margin-inline: auto; padding: clamp(1rem, 3vw, 2.5rem); }
+.ged-shell.review-page .main { padding: 0; }
+.ged-shell .primary { background: #005653; color: #fff; }
+.ged-shell .primary:not(:disabled):hover { background: #004441; }
+.ged-shell .secondary { color: #005653; border-color: #b8cfcc; }
+.entry { max-width: 760px; margin-inline: auto; }
+.entry-heading { margin-bottom: 1.25rem; }
+.entry-heading h1, .review-queue h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0 0 .35rem; }
+.entry-heading p { margin: 0; color: #506064; }
+.entry-flow { display: grid; gap: 1rem; }
+.entry-upload .dropzone { border-color: #94b9b5; background: #f0f7f6; color: #005653; }
+.entry-upload .dropzone strong { font-size: 1rem; color: #004441; }
+.entry-upload .dropzone span { color: #506064; }
+.entry-pending { margin-top: 1rem; }
+.review-queue { width: min(760px, calc(100% - 2rem)); margin: 1.5rem auto; }
