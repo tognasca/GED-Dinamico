@@ -56,29 +56,29 @@ function App() {
   const [testId, setTestId] = useState('');
   const [preview, setPreview] = useState<{ signature: string; values: Record<string, FieldResult> }>();
   const [onlyPending, setOnlyPending] = useState(false);
-  const [reviewTab, setReviewTab] = useState<'fields' | 'pdf'>('fields');
-  const [pdfUrl, setPdfUrl] = useState('');
+  const [reviewTab, setReviewTab] = useState<'fields' | 'file'>('fields');
+  const [fileUrl, setFileUrl] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterField, setFilterField] = useState('');
   const [filterValue, setFilterValue] = useState('');
   const [results, setResults] = useState<GedDocument[] | null>(null);
   const signature = JSON.stringify([testId, prepareFields(fields)]);
   useEffect(() => {
-    setPdfUrl('');
+    setFileUrl('');
     setReviewTab('fields');
     setOnlyPending(false);
-    if (!selected || selected.contentType !== 'application/pdf') return;
+    if (!selected || (selected.contentType !== 'application/pdf' && !selected.contentType.startsWith('image/'))) return;
     const controller = new AbortController();
     let url: string | undefined;
     void fetch(`${API_URL}/api/documents/${selected.id}/file`, {
       headers: { 'X-Tenant-Id': DEMO_TENANT }, signal: controller.signal,
     }).then(response => {
-      if (!response.ok) throw new Error('Não foi possível abrir o PDF.');
+      if (!response.ok) throw new Error('Não foi possível abrir o arquivo.');
       return response.blob();
     }).then(blob => {
       if (!controller.signal.aborted) {
         url = URL.createObjectURL(blob);
-        setPdfUrl(url);
+        setFileUrl(url);
       }
     }).catch(error => { if (!controller.signal.aborted) setError(String(error)); });
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
@@ -198,12 +198,17 @@ function App() {
       </section>}
       {view === 'review' && selected && current && <section className="review">
               <header><h1>Conferir documento</h1><p>{selected.fileName}</p></header>
-              {pdfUrl && <div className="review-tabs" role="group" aria-label="Visualização da conferência">
+              {fileUrl && <div className="review-tabs" role="group" aria-label="Visualização da conferência">
                 <button type="button" aria-pressed={reviewTab === 'fields'} onClick={()=>setReviewTab('fields')}>Campos</button>
-                <button type="button" aria-pressed={reviewTab === 'pdf'} onClick={()=>setReviewTab('pdf')}>PDF</button>
+                <button type="button" aria-pressed={reviewTab === 'file'} onClick={()=>setReviewTab('file')}>Arquivo</button>
               </div>}
-              <div className={`review-grid review-${reviewTab}`}>
-                {pdfUrl && <iframe title="PDF para conferência" src={pdfUrl}/>}
+              <div className={`review-grid review-tab-${reviewTab}`}>
+                {fileUrl && (selected.contentType === 'application/pdf'
+                  ? <iframe className="review-file" title="PDF para conferência" src={fileUrl}/>
+                  : <div className="review-file review-image">
+                      {selected.contentType !== 'image/tiff' && <img src={fileUrl} alt={selected.fileName}/>}
+                      <a href={fileUrl} download={selected.fileName}>{selected.contentType === 'image/tiff' ? 'Baixar imagem TIFF para conferir' : 'Baixar imagem original'}</a>
+                    </div>)}
                 <div className="review-form">
                   <h2>Campos do documento</h2>
                   <div className="review-model">{current.name}</div>
