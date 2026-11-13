@@ -1,6 +1,6 @@
 """Generate twelve synthetic policies and their ground truth."""
 import json
-import subprocess
+import pymupdf
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -43,11 +43,9 @@ for i in range(12):
         if i < 6:
             target.write_bytes(path.read_bytes())
         else:
-            raster = Path(scratch) / "scan"
-            subprocess.run(["pdftoppm", "-r", "150", "-singlefile", "-png",
-                            str(path), str(raster)], check=True)
-            with Image.open(raster.with_suffix(".png")) as image:
-                scan = image.convert("RGB")
+            with pymupdf.open(path) as source:
+                raster = source[0].get_pixmap(dpi=150, alpha=False)
+                scan = Image.frombytes("RGB", (raster.width, raster.height), raster.samples)
                 if i >= 9:
                     scan = scan.rotate(0.7, fillcolor="white").filter(ImageFilter.GaussianBlur(0.7))
                 scan.save(target, resolution=150)

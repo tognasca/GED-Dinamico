@@ -1,8 +1,9 @@
 # Comparação de extração de apólices
 
-Na pasta `examples/ocr-benchmark`, com Python (Pillow e ReportLab), Poppler e SDK .NET 10:
+Na pasta `examples/ocr-benchmark`, com Python e SDK .NET 10:
 
 ```sh
+python -m pip install Pillow reportlab pymupdf
 python generate.py
 dotnet run --project Benchmark.csproj
 ```
