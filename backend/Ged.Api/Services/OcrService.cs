@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using System.Net.Http.Headers;
 
 namespace Ged.Api.Services;
 
@@ -8,7 +10,7 @@ public interface IOcrProvider
     Task<string> ReadAsync(string fileName, string contentType, Stream file, CancellationToken ct);
 }
 
-public sealed class TesseractOcrProvider(IConfiguration configuration) : IOcrProvider
+public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClientFactory clients, ILogger<TesseractOcrProvider> logger) : IOcrProvider
 {
     public async Task<string> ReadAsync(string fileName, string contentType, Stream file, CancellationToken ct)
     {
@@ -29,6 +31,33 @@ public sealed class TesseractOcrProvider(IConfiguration configuration) : IOcrPro
             var pages = new List<string>();
             if (isPdf)
             {
+                try
+                {
+                    var embedded = await Execute(configuration["Ocr:PdfToText"] ?? "pdftotext",
+                        ["-f", "1", "-l", "30", "-layout", "-enc", "UTF-8", input, "-"], ct);
+                    var pagesWithText = embedded.Split('\f').ToList();
+                    if (pagesWithText.Count > 0 && pagesWithText[^1].Length == 0)
+                        pagesWithText.RemoveAt(pagesWithText.Count - 1);
+                    if (pagesWithText.Count > 0 && pagesWithText.All(page => page.Count(char.IsLetterOrDigit) >= 30))
+                        return string.Join("\n", pagesWithText);
+                }
+                catch (Exception error) when (error is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    logger.LogWarning("PDF text extraction failed ({ErrorType}); continuing with OCR", error.GetType().Name);
+                }
+
+                if (!string.IsNullOrWhiteSpace(configuration["Ocr:DoclingUrl"]))
+                {
+                    try
+                    {
+                        return await ReadWithDoclingAsync(input, ct);
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning("Docling failed ({ErrorType}); continuing with Tesseract", error.GetType().Name);
+                    }
+                }
+
                 await Execute(configuration["Ocr:PdfToPpm"] ?? "pdftoppm", ["-f", "1", "-l", "30", "-r", "200", "-png", input, Path.Combine(temp, "page")], ct);
                 pages.AddRange(Directory.GetFiles(temp, "page-*.png").OrderBy(x => x, StringComparer.Ordinal));
                 if (pages.Count == 0) throw new InvalidOperationException("PDF has no readable pages");
@@ -42,6 +71,34 @@ public sealed class TesseractOcrProvider(IConfiguration configuration) : IOcrPro
             return result.ToString();
         }
         finally { Directory.Delete(temp, true); }
+    }
+
+    private async Task<string> ReadWithDoclingAsync(string path, CancellationToken ct)
+    {
+        using var client = clients.CreateClient("Docling");
+        using var form = new MultipartFormDataContent();
+        await using var source = File.OpenRead(path);
+        var upload = new StreamContent(source);
+        upload.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        form.Add(upload, "files", "document.pdf");
+        form.Add(new StringContent("text"), "to_formats");
+        form.Add(new StringContent("true"), "do_ocr");
+        form.Add(new StringContent("tesseract"), "ocr_engine");
+        form.Add(new StringContent("por"), "ocr_lang");
+        form.Add(new StringContent("eng"), "ocr_lang");
+        form.Add(new StringContent("1"), "page_range");
+        form.Add(new StringContent("30"), "page_range");
+        var endpoint = configuration["Ocr:DoclingUrl"]!.TrimEnd('/') + "/v1/convert/file";
+        using var response = await client.PostAsync(endpoint, form, ct);
+        response.EnsureSuccessStatusCode();
+        await using var body = await response.Content.ReadAsStreamAsync(ct);
+        using var result = await JsonDocument.ParseAsync(body, cancellationToken: ct);
+        if (result.RootElement.GetProperty("status").GetString() == "success" &&
+            result.RootElement.GetProperty("document").GetProperty("text_content").GetString() is { } text &&
+            !string.IsNullOrWhiteSpace(text))
+            return text;
+
+        throw new InvalidDataException("Docling did not return a complete text result.");
     }
 
     private static async Task<string> Execute(string command, IEnumerable<string> args, CancellationToken ct)

@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<GedDbContext>(x => x.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddSingleton<IStorageProvider, LocalStorageProvider>();
+builder.Services.AddHttpClient("Docling", client => client.Timeout = TimeSpan.FromSeconds(90));
 builder.Services.AddSingleton<IOcrProvider, TesseractOcrProvider>();
 builder.Services.AddSingleton<DocumentExtraction>();
 if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("FolderImport:Enabled"))
