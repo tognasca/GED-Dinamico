@@ -61,3 +61,7 @@
 .entry-upload .dropzone span { color: #506064; }
 .entry-pending { margin-top: 1rem; }
 .review-queue { width: min(760px, calc(100% - 2rem)); margin: 1.5rem auto; }
+
+.entry-options { margin-block: 1rem; border-top: 1px solid #dbe5e3; padding-top: .75rem; }
+.entry-options summary { cursor: pointer; color: #005653; font-weight: 600; }
+.entry-flow .inline { flex-wrap: wrap; }
