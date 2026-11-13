@@ -4,7 +4,7 @@ import { Archive, Boxes, CheckCircle2, ChevronRight, CloudUpload, Database, File
 import { api, API_URL, DEMO_TENANT, type Batch, type DocumentType, type Field, type FieldResult, type GedDocument, type Suggestion } from './api';
 import './style.css';
 
-type View = 'capture' | 'models' | 'documents' | 'batches' | 'physical';
+type View = 'review' | 'capture' | 'models' | 'documents' | 'batches' | 'physical';
 const defaultField = (): Field => ({ key: '', label: '', dataType: 'text', required: false, anchor: '' });
 
 function normalizeFieldKey(value: string): string {
@@ -119,7 +119,7 @@ function App() {
       const form = new FormData(); form.append('file', file);
       const suffix = batchId ? `?batchId=${batchId}` : '';
       const doc = await api<GedDocument>(`/documents/upload${suffix}`, { method: 'POST', body: form });
-      setSelected(doc); setCorrections({}); setTestId(doc.id); setPreview(undefined); setFile(null); setView('capture');
+      setSelected(doc); setCorrections({}); setTestId(doc.id); setPreview(undefined); setFile(null); setView(doc.documentTypeId ? 'review' : 'capture');
       setFields(prepareFields((Array.isArray(doc.suggestions) ? doc.suggestions as Suggestion[] : []).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label }))));
       setNotice(doc.ocrStatus === 'Completed' ? 'OCR concluído. Confira os campos e configure seu modelo.' : 'Documento salvo, mas o OCR precisa de atenção.');
     });
@@ -153,7 +153,7 @@ function App() {
     if (!selected || !id) return;
     await perform(async () => {
       const doc = await api<GedDocument>(`/documents/${selected.id}/apply-template`, { method: 'POST', body: JSON.stringify({ documentTypeId: id }) });
-      setSelected(doc); setCorrections({}); setNotice('Extração realizada. Confirme os campos para indexar.');
+      setSelected(doc); setCorrections({}); setView('review'); setNotice('Extração realizada. Confirme os campos para indexar.');
     });
   }
   async function confirmDocument() {
@@ -164,7 +164,7 @@ function App() {
     });
   }
   function openDoc(doc: GedDocument) {
-    setSelected(doc); setTestId(doc.id); setPreview(undefined); setView('capture'); setCorrections({}); setChosenTemplate(doc.documentTypeId || '');
+    setSelected(doc); setTestId(doc.id); setPreview(undefined); setView(doc.documentTypeId ? 'review' : 'capture'); setCorrections({}); setChosenTemplate(doc.documentTypeId || '');
     setFields(Array.isArray(doc.suggestions) ? (doc.suggestions as Suggestion[]).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label })) : []);
   }
   const menu: { id: View; label: string; icon: React.ReactNode }[] = [
@@ -175,7 +175,16 @@ function App() {
     { id: 'physical', label: 'Arquivo físico', icon: <Boxes size={18} /> },
   ];
 
-  return <div className="app">
+  return <div className={view === 'review' ? 'app review-page' : 'app'}>
+    {view === 'review' && <header className="review-nav">
+      <strong>GED <span>Dinâmico</span></strong>
+      <nav aria-label="Navegação do GED">
+        <button onClick={()=>setView('capture')}>Entrada</button>
+        <button aria-current="page">Conferência</button>
+        <button onClick={()=>setView('documents')}>Biblioteca</button>
+        <button onClick={()=>setView('models')}>Modelos</button>
+      </nav>
+    </header>}
     <aside className="sidebar"><div className="brand"><div className="brand-icon"><Database size={22}/></div><div><b>GED Dinâmico</b><small>Document intelligence</small></div></div>
       <div className="sidebar-heading">WORKSPACE</div>
       <nav>{menu.map(item => <button key={item.id} className={view === item.id ? 'nav active' : 'nav'} onClick={() => setView(item.id)}>{item.icon}<span>{item.label}</span>{view === item.id && <ChevronRight size={15}/>}</button>)}</nav>
@@ -186,21 +195,9 @@ function App() {
       {error && <div className="alert error"><XCircle size={16}/>{error}<button onClick={() => setError('')}>×</button></div>}
       {notice && <div className="alert success"><CheckCircle2 size={16}/>{notice}<button onClick={() => setNotice('')}>×</button></div>}
       <div className="stats"><div className="stat"><span>Documentos</span><strong>{documents.length}</strong><small>Capturados</small></div><div className="stat"><span>Modelos</span><strong>{types.length}</strong><small>Tipos configurados</small></div><div className="stat"><span>Para revisão</span><strong>{documents.filter(d => d.status === 'NeedsReview' || d.status === 'AwaitingTemplate').length}</strong><small>Necessitam conferência</small></div><div className="stat"><span>Indexados</span><strong>{documents.filter(d => d.status === 'Indexed').length}</strong><small>Disponíveis para consulta</small></div></div>
-      {view === 'capture' && <div className="workspace">
-        <section className="panel"><div className="panel-title"><div><h2>01. Importar documento</h2><p>Inicie o reconhecimento por OCR</p></div><CloudUpload size={22}/></div>
-          <label className="dropzone"><CloudUpload size={30}/><strong>{file ? file.name : 'Escolha um documento'}</strong><span>PDF, PNG, JPG, TIFF, WEBP ou TXT (teste) · Até 25 MB</span><input type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.txt" onChange={e=>setFile(e.target.files?.[0] ?? null)}/></label>
-          <label className="field-label">Lote (opcional)</label><select value={batchId} onChange={e=>setBatchId(e.target.value)}><option value="">Sem lote</option>{batches.filter(x=>x.status==='Open').map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select>
-          <button className="primary full" disabled={!file || busy} onClick={() => void upload()}>{busy ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} Digitalizar e reconhecer</button>
-          {selected && <><div className="divider"/><div className="panel-title"><div><h2>Documento processado</h2><p>{selected.fileName}</p></div><span className="chip">{selected.status}</span></div>
-            <div className="preview"><FileText size={27}/><div><strong>{selected.fileName}</strong><span>{selected.ocrStatus} · {(selected.fileSize/1024).toFixed(1)} KB</span></div><a href={`${API_URL}/api/documents/${selected.id}/file`} onClick={e=>{e.preventDefault();void fetch(`${API_URL}/api/documents/${selected.id}/file`, {headers:{'X-Tenant-Id':DEMO_TENANT}}).then(r=>{if(!r.ok)throw new Error('Falha ao abrir arquivo');return r.blob()}).then(b=>{const url=URL.createObjectURL(b);window.open(url,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(url),60000)}).catch(err=>setError(String(err)))}}>Abrir</a></div>
-            <label className="field-label">Texto reconhecido</label><pre className="ocr-text">{selected.ocrText || 'Nenhum texto reconhecido.'}</pre></>}
-        </section>
-        <section className="panel"><div className="panel-title"><div><h2>02. Ensinar ou aplicar modelo</h2><p>Campos 100% configuráveis</p></div><Settings2 size={21}/></div>
-          {!selected ? <div className="empty"><ScanLine size={38}/><strong>Pronto para aprender</strong><p>Digitalize um documento para detectar os campos e criar um modelo reutilizável.</p></div> : <>
-            {selected.documentTypeId && <span className="model-tag"><CheckCircle2 size={15}/> Modelo aplicado: {types.find(t=>t.id===selected.documentTypeId)?.name ?? 'Existente'}</span>}
-            <label className="field-label">Aplicar um modelo já criado</label><div className="inline"><select value={chosenTemplate} onChange={e=>setChosenTemplate(e.target.value)}><option value="">Selecione um modelo</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><button className="secondary" disabled={!chosenTemplate || busy || selected.ocrStatus!=='Completed'} onClick={()=>void applyTemplate(chosenTemplate)}>Aplicar</button></div>
-            {current && <section className="review">
-              <header><h3>Conferir documento</h3><p>{selected.fileName}</p></header>
+            {view === 'review' && !current && <button className="secondary" onClick={()=>setView('capture')}>Voltar à entrada</button>}
+      {view === 'review' && selected && current && <section className="review">
+              <header><h1>Conferir documento</h1><p>{selected.fileName}</p></header>
               {pdfUrl && <div className="review-tabs" role="group" aria-label="Visualização da conferência">
                 <button type="button" aria-pressed={reviewTab === 'fields'} onClick={()=>setReviewTab('fields')}>Campos</button>
                 <button type="button" aria-pressed={reviewTab === 'pdf'} onClick={()=>setReviewTab('pdf')}>PDF</button>
@@ -208,7 +205,8 @@ function App() {
               <div className={`review-grid review-${reviewTab}`}>
                 {pdfUrl && <iframe title="PDF para conferência" src={pdfUrl}/>}
                 <div className="review-form">
-                  <h4>Campos do documento</h4>
+                  <h2>Campos do documento</h2>
+                  <div className="review-model">{current.name}</div>
                   <label className="checkbox"><input type="checkbox" checked={onlyPending} onChange={e=>setOnlyPending(e.target.checked)}/> Mostrar só pendências</label>
                   {current.fields.map(field => {
                     const value = corrections[field.key] ?? selected.values?.[field.key]?.value ?? '';
@@ -222,8 +220,22 @@ function App() {
                   })}
                 </div>
               </div>
-              <footer className="review-actions"><button className="primary" disabled={busy} onClick={()=>void confirmDocument()}><CheckCircle2 size={17}/> Confirmar e indexar</button></footer>
+              <footer className="review-actions"><button className="secondary" onClick={()=>setView('capture')}>Alterar modelo</button><button className="primary" disabled={busy} onClick={()=>void confirmDocument()}><CheckCircle2 size={17}/> Confirmar e indexar</button></footer>
             </section>}
+      {view === 'capture' && <div className="workspace">
+        <section className="panel"><div className="panel-title"><div><h2>01. Importar documento</h2><p>Inicie o reconhecimento por OCR</p></div><CloudUpload size={22}/></div>
+          <label className="dropzone"><CloudUpload size={30}/><strong>{file ? file.name : 'Escolha um documento'}</strong><span>PDF, PNG, JPG, TIFF, WEBP ou TXT (teste) · Até 25 MB</span><input type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.txt" onChange={e=>setFile(e.target.files?.[0] ?? null)}/></label>
+          <label className="field-label">Lote (opcional)</label><select value={batchId} onChange={e=>setBatchId(e.target.value)}><option value="">Sem lote</option>{batches.filter(x=>x.status==='Open').map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select>
+          <button className="primary full" disabled={!file || busy} onClick={() => void upload()}>{busy ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} Digitalizar e reconhecer</button>
+          {selected && <><div className="divider"/><div className="panel-title"><div><h2>Documento processado</h2><p>{selected.fileName}</p></div><span className="chip">{selected.status}</span></div>
+            <div className="preview"><FileText size={27}/><div><strong>{selected.fileName}</strong><span>{selected.ocrStatus} · {(selected.fileSize/1024).toFixed(1)} KB</span></div><a href={`${API_URL}/api/documents/${selected.id}/file`} onClick={e=>{e.preventDefault();void fetch(`${API_URL}/api/documents/${selected.id}/file`, {headers:{'X-Tenant-Id':DEMO_TENANT}}).then(r=>{if(!r.ok)throw new Error('Falha ao abrir arquivo');return r.blob()}).then(b=>{const url=URL.createObjectURL(b);window.open(url,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(url),60000)}).catch(err=>setError(String(err)))}}>Abrir</a></div>
+            <label className="field-label">Texto reconhecido</label><pre className="ocr-text">{selected.ocrText || 'Nenhum texto reconhecido.'}</pre></>}
+        </section>
+        <section className="panel"><div className="panel-title"><div><h2>02. Ensinar ou aplicar modelo</h2><p>Campos 100% configuráveis</p></div><Settings2 size={21}/></div>
+          {!selected ? <div className="empty"><ScanLine size={38}/><strong>Pronto para aprender</strong><p>Digitalize um documento para detectar os campos e criar um modelo reutilizável.</p></div> : <>
+            {selected.documentTypeId && <span className="model-tag"><CheckCircle2 size={15}/> Modelo aplicado: {types.find(t=>t.id===selected.documentTypeId)?.name ?? 'Existente'}</span>}
+            <label className="field-label">Aplicar um modelo já criado</label><div className="inline"><select value={chosenTemplate} onChange={e=>setChosenTemplate(e.target.value)}><option value="">Selecione um modelo</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><button className="secondary" disabled={!chosenTemplate || busy || selected.ocrStatus!=='Completed'} onClick={()=>void applyTemplate(chosenTemplate)}>Aplicar</button></div>
+            {current && <button className="secondary full" onClick={()=>setView('review')}>Conferir documento</button>}
             <div className="divider"/><h3>Criar novo modelo a partir deste documento</h3>
             <label className="control"><span>Nome do modelo</span><input placeholder="Ex.: Cheque bancário" value={modelName} onChange={e=>setModelName(e.target.value)}/></label>
             <label className="control"><span>Palavras-chave para reconhecer automaticamente</span><input placeholder="Ex.: cheque, banco, agência" value={keywords} onChange={e=>setKeywords(e.target.value)}/></label>

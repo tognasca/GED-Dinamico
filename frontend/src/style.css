@@ -22,3 +22,25 @@
   .review-fields iframe, .review-pdf .review-form { display: none; }
   .review-actions .primary { width: 100%; justify-content: center; }
 }
+
+.review-page { display: block; background: #fafaf9; color: #101820; }
+.review-page .sidebar, .review-page .top, .review-page .stats, .review-page .main > footer { display: none; }
+.review-page .main { max-width: none; padding: 0; }
+.review-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 2rem; padding: .75rem clamp(1rem, 3vw, 2.5rem); background: white; border-bottom: 1px solid #d9dfde; }
+.review-nav strong { font-size: clamp(1.35rem, 2.5vw, 2rem); }
+.review-nav strong span { color: #005653; }
+.review-nav nav { display: flex; flex-wrap: wrap; gap: .35rem; }
+.review-nav button { border: 0; border-radius: 8px; background: transparent; padding: .55rem .8rem; }
+.review-nav button[aria-current] { background: #005653; color: white; }
+.review-page .review { margin: 0; border: 0; border-radius: 0; background: transparent; }
+.review-page .review header h1 { margin: .25rem 0; font-size: clamp(1.75rem, 4vw, 3rem); }
+.review-page .review-grid:has(iframe) { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.review-page .review-grid iframe { background: #545b62; height: max(32rem, 68dvh); border-radius: 8px; }
+.review-page .review-form { padding: clamp(1rem, 2vw, 2rem); }
+.review-form h2 { margin: 0 0 1rem; }
+.review-model { border: 1px solid #cbd5d4; border-radius: 7px; padding: .75rem; margin-bottom: 1rem; }
+.review-page .review-actions { gap: .75rem; background: #fafaf9; border-top: 1px solid #d9dfde; margin-top: .75rem; }
+@media (max-width: 900px) {
+  .review-page .review-grid:has(iframe) { grid-template-columns: minmax(0, 1fr); }
+  .review-page .review-actions { flex-wrap: wrap; }
+}
