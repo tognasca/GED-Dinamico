@@ -145,26 +145,24 @@ api.MapPost("/documents/upload", async (HttpContext ctx, GedDbContext db, IStora
     var doc = new GedDocument { TenantId = tenant, FileName = Path.GetFileName(file.FileName), ContentType = file.ContentType, FileSize = size, StorageKey = key, Sha256 = hash, BatchId = batchId };
     db.Documents.Add(doc);
     await db.SaveChangesAsync(ct);
-    try
-    {
-        await using var source = await storage.OpenReadAsync(tenant, key, ct);
-        doc.OcrText = await ocr.ReadAsync(doc.FileName, doc.ContentType, source, ct);
-        doc.OcrStatus = "Completed";
-        doc.SuggestionsJson = JsonSerializer.Serialize(extractor.Suggest(doc.OcrText), JsonOptions.Default);
-        doc.Status = "AwaitingTemplate";
-        var types = await db.DocumentTypes.AsNoTracking().Where(x => x.TenantId == tenant && x.Active).ToListAsync(ct);
-        var type = extractor.MatchType(doc.OcrText, types);
-        if (type != null) Apply(type, doc, extractor);
-    }
-    catch (Exception e) when (e is not OperationCanceledException)
-    {
-        doc.OcrStatus = "Failed"; doc.Status = "NeedsReview";
-        doc.SuggestionsJson = JsonSerializer.Serialize(new { error = "OCR failed. Check service logs and Tesseract/Poppler installation." }, JsonOptions.Default);
-        app.Logger.LogError(e, "OCR failure for document {DocumentId}", doc.Id);
-    }
+    await Recognize(doc, db, storage, ocr, extractor, app.Logger, ct);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/documents/{doc.Id}", ViewDocument(doc));
 }).DisableAntiforgery(); // Local MVP only; use token-based antiforgery with production authentication.
+
+api.MapPost("/documents/{id:guid}/retry", async (Guid id, HttpContext ctx, GedDbContext db,
+    IStorageProvider storage, IOcrProvider ocr, DocumentExtraction extractor, CancellationToken ct) =>
+{
+    var tenant = Tenant(ctx);
+    var doc = await db.Documents.SingleOrDefaultAsync(d => d.Id == id && d.TenantId == tenant, ct);
+    if (doc is null) return Results.NotFound();
+    if (doc.OcrStatus != "Failed" || doc.Status == "Indexed")
+        return Results.Conflict(new { error = "Apenas documentos com falha de leitura podem ser reprocessados." });
+
+    await Recognize(doc, db, storage, ocr, extractor, app.Logger, ct);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ViewDocument(doc));
+});
 
 api.MapPost("/documents/{id:guid}/apply-template", async (Guid id, ApplyTemplateRequest request, HttpContext ctx, GedDbContext db, DocumentExtraction extraction) =>
 {
@@ -282,6 +280,29 @@ api.MapGet("/boxes/{id:guid}/route", async (Guid id, HttpContext ctx, GedDbConte
     }
     return Results.Ok(new { box.Id, box.Code, route });
 });
+
+static async Task Recognize(GedDocument doc, GedDbContext db, IStorageProvider storage,
+    IOcrProvider ocr, DocumentExtraction extractor, ILogger logger, CancellationToken ct)
+{
+    try
+    {
+        await using var source = await storage.OpenReadAsync(doc.TenantId, doc.StorageKey, ct);
+        doc.OcrText = await ocr.ReadAsync(doc.FileName, doc.ContentType, source, ct);
+        if (string.IsNullOrWhiteSpace(doc.OcrText)) throw new InvalidDataException("No readable text found.");
+        doc.OcrStatus = "Completed";
+        doc.SuggestionsJson = JsonSerializer.Serialize(extractor.Suggest(doc.OcrText), JsonOptions.Default);
+        doc.Status = "AwaitingTemplate";
+        var types = await db.DocumentTypes.AsNoTracking().Where(x => x.TenantId == doc.TenantId && x.Active).ToListAsync(ct);
+        var type = extractor.MatchType(doc.OcrText, types);
+        if (type != null) Apply(type, doc, extractor);
+    }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        doc.OcrStatus = "Failed"; doc.Status = "NeedsReview";
+        doc.SuggestionsJson = JsonSerializer.Serialize(new { error = "OCR failed. Check service logs and Tesseract/Poppler installation." }, JsonOptions.Default);
+        logger.LogError(e, "OCR failure for document {DocumentId}", doc.Id);
+    }
+}
 
 static void Apply(DocumentType type, GedDocument doc, DocumentExtraction extractor)
 {

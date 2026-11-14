@@ -157,11 +157,24 @@ function App() {
       setSelected(doc); setCorrections({}); setView('review'); setNotice('Extração realizada. Confirme os campos para indexar.');
     });
   }
-  async function confirmDocument() {
+  async function confirmDocument(advance = false) {
     if (!selected) return;
     await perform(async () => {
       const doc = await api<GedDocument>(`/documents/${selected.id}/confirm`, { method: 'POST', body: JSON.stringify({ values: corrections }) });
-      setSelected(doc); setResults(null); setView('documents'); setNotice('Documento salvo na biblioteca.');
+      setResults(null);
+      const next = advance ? await api<GedDocument[]>('/documents').then(items =>
+        items.find(item => item.id !== doc.id && item.ocrStatus === 'Completed' &&
+          (item.status === 'NeedsReview' || item.status === 'AwaitingTemplate'))).catch(() => undefined) : undefined;
+      if (next) openDoc(next);
+      else { setSelected(doc); setView('documents'); }
+      setNotice('Documento salvo na biblioteca.');
+    });
+  }
+  async function retryDocument(id: string) {
+    await perform(async () => {
+      const doc = await api<GedDocument>(`/documents/${id}/retry`, { method: 'POST' });
+      if (doc.ocrStatus === 'Completed') openDoc(doc);
+      else setError('Ainda não foi possível ler o arquivo. Se estiver ilegível, importe uma cópia mais nítida.');
     });
   }
   function openDoc(doc: GedDocument) {
@@ -169,21 +182,21 @@ function App() {
     setFields(Array.isArray(doc.suggestions) ? (doc.suggestions as Suggestion[]).map(s => ({ key: s.key, label: s.label, dataType: s.dataType, required: false, anchor: s.label })) : []);
   }
   const menu: { id: View; label: string }[] = [
-    { id: 'capture', label: 'Entrada' },
+    { id: 'capture', label: 'Caixa de entrada' },
     { id: 'review', label: 'Conferência' },
     { id: 'documents', label: 'Biblioteca' },
     { id: 'models', label: 'Modelos' },
     { id: 'batches', label: 'Lotes' },
     { id: 'physical', label: 'Arquivo físico' },
   ];
-  const pendingDocuments = documents.filter(doc => doc.status === 'NeedsReview' || doc.status === 'AwaitingTemplate');
+  const pendingDocuments = documents.filter(doc => doc.status === 'NeedsReview' || doc.status === 'AwaitingTemplate' || doc.ocrStatus === 'Pending' || doc.ocrStatus === 'Failed');
 
   return <div className={view === 'review' ? 'app ged-shell review-page' : 'app ged-shell'}>
     <header className="review-nav">
       <strong>GED <span>Dinâmico</span></strong>
       <nav aria-label="Navegação do GED">
         {menu.map(item => <button key={item.id} aria-current={view === item.id ? 'page' : undefined}
-          onClick={() => { if (item.id === 'review' && view !== 'review') { setSelected(null); setCorrections({}); } setView(item.id); }}>{item.label}</button>)}
+          onClick={() => { if (item.id === 'capture' || (item.id === 'review' && view !== 'review')) { setSelected(null); setCorrections({}); } setView(item.id); }}>{item.label}</button>)}
       </nav>
     </header>
     <main className="main">
@@ -192,9 +205,9 @@ function App() {
       {view === 'review' && !current && <section className="panel review-queue">
         <h1>Documentos para conferir</h1>
         {pendingDocuments.length ? <div className="items">{pendingDocuments.map(doc =>
-          <button className="item" key={doc.id} onClick={() => openDoc(doc)}>
+          <button className="item" key={doc.id} disabled={busy || doc.ocrStatus === 'Pending'} onClick={() => doc.ocrStatus === 'Failed' ? void retryDocument(doc.id) : openDoc(doc)}>
             <FileText size={20}/><span>{doc.fileName}</span>
-            <small>{doc.documentTypeId ? 'Conferir campos' : 'Escolher modelo'}</small><ChevronRight size={16}/>
+            <small>{doc.ocrStatus === 'Failed' ? 'Tentar novamente' : doc.ocrStatus === 'Pending' ? 'Aguardando leitura' : doc.documentTypeId ? 'Conferir campos' : 'Escolher tipo'}</small><ChevronRight size={16}/>
           </button>)}</div> : <p>Nenhum documento aguardando conferência.</p>}
       </section>}
       {view === 'review' && selected && current && <section className="review">
@@ -226,10 +239,10 @@ function App() {
                   })}
                 </div>
               </div>
-              <footer className="review-actions"><button className="secondary" onClick={()=>setView('capture')}>Alterar modelo</button><button className="primary" disabled={busy} onClick={()=>void confirmDocument()}><CheckCircle2 size={17}/> Salvar na biblioteca</button></footer>
+              <footer className="review-actions"><button className="secondary" onClick={()=>setView('capture')}>Alterar modelo</button><button className="primary" disabled={busy} onClick={()=>void confirmDocument()}><CheckCircle2 size={17}/> Salvar na biblioteca</button>{pendingDocuments.some(doc => doc.id !== selected.id && doc.ocrStatus === 'Completed') && <button className="primary" disabled={busy} onClick={()=>void confirmDocument(true)}>Salvar e abrir o próximo</button>}</footer>
             </section>}
       {view === 'capture' && <div className="entry">
-        <header className="entry-heading"><h1>{selected ? 'Preparar documento' : 'Importar documento'}</h1>
+        <header className="entry-heading"><h1>{selected ? 'Preparar documento' : 'Caixa de entrada'}</h1>
           <p>{selected ? selected.fileName : 'Selecione um arquivo. O GED vai ler o documento e preparar os campos para conferência.'}</p>
         </header>
         <div className="entry-flow">
@@ -238,7 +251,12 @@ function App() {
           <label className="field-label">Lote (opcional)</label><select value={batchId} onChange={e=>setBatchId(e.target.value)}><option value="">Sem lote</option>{batches.filter(x=>x.status==='Open').map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select>
           <button className="primary full" disabled={!file || busy} onClick={() => void upload()}>{busy ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} Processar documento</button>
         </section>}
-        {selected && <section className="panel"><div className="panel-title"><div><h2>Modelo do documento</h2></div><Settings2 size={21}/></div>
+        {selected?.ocrStatus === 'Failed' && <section className="panel">
+          <h2>Não conseguimos ler este arquivo</h2>
+          <div className="inline"><button className="primary" disabled={busy} onClick={()=>void retryDocument(selected.id)}>Tentar novamente</button>
+          <button className="secondary" onClick={()=>setSelected(null)}>Voltar à caixa de entrada</button></div>
+        </section>}
+        {selected && selected.ocrStatus !== 'Failed' && <section className="panel"><div className="panel-title"><div><h2>Modelo do documento</h2></div><Settings2 size={21}/></div>
             {selected.documentTypeId && <span className="model-tag"><CheckCircle2 size={15}/> Modelo aplicado: {types.find(t=>t.id===selected.documentTypeId)?.name ?? 'Existente'}</span>}
             <label className="field-label">Tipo de documento</label><div className="inline"><select value={chosenTemplate} onChange={e=>setChosenTemplate(e.target.value)}><option value="">Selecione o tipo</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><button className="secondary" disabled={!chosenTemplate || busy || selected.ocrStatus!=='Completed'} onClick={()=>void applyTemplate(chosenTemplate)}>Continuar para conferência</button></div>
             {current && <button className="secondary full" onClick={()=>setView('review')}>Conferir documento</button>}
@@ -274,9 +292,16 @@ function App() {
             <button className="secondary" onClick={()=>{setSelected(null);setCorrections({});setNotice('');setError('');}}>Importar outro arquivo</button>
         </section>}
         </div>
-        {!selected && <button className="secondary entry-pending" onClick={() => setView('review')}>
-          Ver documentos para conferir{pendingDocuments.length > 0 ? ` (${pendingDocuments.length})` : ''}
-        </button>}
+        {!selected && <section className="panel entry-pending">
+          <h2>Documentos pendentes</h2>
+          {pendingDocuments.length ? <div className="items">{pendingDocuments.map(doc =>
+            <button className="item" key={doc.id} disabled={busy || doc.ocrStatus === 'Pending'}
+              onClick={() => doc.ocrStatus === 'Failed' ? void retryDocument(doc.id) : openDoc(doc)}>
+              <FileText size={20}/><span>{doc.fileName}</span>
+              <small>{doc.ocrStatus === 'Failed' ? 'Tentar novamente' : doc.ocrStatus === 'Pending' ? 'Aguardando leitura' :
+                doc.documentTypeId ? 'Conferir campos' : 'Escolher tipo'}</small>
+            </button>)}</div> : <p>Nenhum documento pendente.</p>}
+        </section>}
       </div>}
       {view === 'documents' && <section className="panel"><div className="panel-title"><div><h2>Biblioteca documental</h2><p>Busca por tipo, campo indexado ou texto OCR</p></div><FileSearch size={21}/></div><input placeholder="Pesquisar documentos..." value={search} onChange={e=>setSearch(e.target.value)}/><div className="inline"><select aria-label="Tipo de documento" value={filterType} onChange={e=>{setFilterType(e.target.value);setFilterField('');setFilterValue('')}}><option value="">Todos os tipos</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>{filterType && <select aria-label="Campo indexado" value={filterField} onChange={e=>setFilterField(e.target.value)}><option value="">Qualquer campo</option>{types.find(t=>t.id===filterType)?.fields.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{filterField && <input aria-label="Valor do campo" value={filterValue} onChange={e=>setFilterValue(e.target.value)}/>}<button className="secondary" disabled={busy} onClick={()=>void searchLibrary()}>Buscar</button></div><div className="items">{(results ?? documents).map(d=><button className="item" key={d.id} onClick={()=>openDoc(d)}><FileText size={20}/><span><strong>{d.fileName}</strong><small>{new Date(d.createdAt).toLocaleString('pt-BR')}</small></span><span className="chip">{d.status}</span><ChevronRight size={15}/></button>)}</div></section>}
       {view === 'models' && <section className="panel"><div className="panel-title"><div><h2>Catálogo de modelos</h2><p>Estruturas criadas sem código</p></div><Layers size={22}/></div><div className="items">{types.length===0&&<p className="muted">Nenhum modelo criado. Vá à Central de digitalização para ensinar o primeiro.</p>}{types.map(t=><div className="item" key={t.id}><Layers size={20}/><span><strong>{t.name}</strong><small>{t.fields.map(f=>f.label).join(' · ')}</small></span><span className="chip">v{t.version}</span></div>)}</div></section>}
