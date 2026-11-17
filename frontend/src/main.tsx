@@ -28,6 +28,15 @@ function prepareFields(fields: Field[]): Field[] {
   });
 }
 
+function sourceExcerpt(text: string, value: string) {
+  const needle = value.trim();
+  if (needle.length < 3) return null;
+  const start = text.indexOf(needle);
+  if (start < 0 || text.indexOf(needle, start + 1) >= 0) return null;
+  const end = start + needle.length;
+  return { before: text.slice(Math.max(0, start - 48), start), value: text.slice(start, end), after: text.slice(end, end + 48) };
+}
+
 function reviewIssue(field: Field, value: string, source?: string) {
   if (source === 'ambiguous-layout') return 'Layout ambíguo';
   if (!value.trim()) return field.required ? 'Campo obrigatório vazio' : 'Campo vazio';
@@ -62,6 +71,9 @@ function App() {
   const [filterType, setFilterType] = useState('');
   const [filterField, setFilterField] = useState('');
   const [filterValue, setFilterValue] = useState('');
+  const [libraryPage, setLibraryPage] = useState(1);
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [hasMore, setHasMore] = useState(false);
   const [results, setResults] = useState<GedDocument[] | null>(null);
   const signature = JSON.stringify([testId, prepareFields(fields)]);
   useEffect(() => {
@@ -133,15 +145,21 @@ function App() {
       setPreview({ signature, values }); setModelStep(3);
     });
   }
-  async function searchLibrary() {
+  async function searchLibrary(page = 1, reuseFilters = false) {
     await perform(async () => {
-      const query = new URLSearchParams({ q: search.trim() });
-      if (filterType) query.set('typeId', filterType);
-      if (filterField && filterValue.trim()) {
+      const query = !reuseFilters ? new URLSearchParams({ q: search.trim() }) : new URLSearchParams(libraryQuery || undefined);
+      if (!reuseFilters && filterType) query.set('typeId', filterType);
+      if (!reuseFilters && filterField && filterValue.trim()) {
         query.set('field', filterField);
         query.set('value', filterValue.trim());
       }
-      setResults(await api<GedDocument[]>(`/documents?${query}`));
+      setLibraryQuery(query.toString());
+      query.set('page', String(page));
+      query.set('pageSize', '25');
+      const result = await api<{ items: GedDocument[]; hasMore: boolean }>(`/documents?${query}`);
+      setResults(result.items);
+      setLibraryPage(page);
+      setHasMore(result.hasMore);
     });
   }
   async function createType() {
@@ -231,10 +249,14 @@ function App() {
                     const value = corrections[field.key] ?? selected.values?.[field.key]?.value ?? '';
                     const issue = reviewIssue(field, value, corrections[field.key] === undefined ? selected.values?.[field.key]?.source : undefined);
                     if (onlyPending && !issue) return null;
+                    const evidence = corrections[field.key] === undefined ? sourceExcerpt(selected.ocrText, value) : null;
                     return <label className="control" key={field.key}>
                       <span>{field.label}{field.required ? ' *' : ''}</span>
                       <input value={value} aria-invalid={Boolean(issue && (field.required || value.trim()))} onChange={e=>setCorrections(previous=>({...previous,[field.key]:e.target.value}))}/>
                       {issue && <small className="field-warning">{issue}</small>}
+                      {evidence && <details><summary>Ver trecho reconhecido</summary>
+                        <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
+                      </details>}
                     </label>;
                   })}
                 </div>
@@ -303,7 +325,11 @@ function App() {
             </button>)}</div> : <p>Nenhum documento pendente.</p>}
         </section>}
       </div>}
-      {view === 'documents' && <section className="panel"><div className="panel-title"><div><h2>Biblioteca documental</h2><p>Busca por tipo, campo indexado ou texto OCR</p></div><FileSearch size={21}/></div><input placeholder="Pesquisar documentos..." value={search} onChange={e=>setSearch(e.target.value)}/><div className="inline"><select aria-label="Tipo de documento" value={filterType} onChange={e=>{setFilterType(e.target.value);setFilterField('');setFilterValue('')}}><option value="">Todos os tipos</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>{filterType && <select aria-label="Campo indexado" value={filterField} onChange={e=>setFilterField(e.target.value)}><option value="">Qualquer campo</option>{types.find(t=>t.id===filterType)?.fields.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{filterField && <input aria-label="Valor do campo" value={filterValue} onChange={e=>setFilterValue(e.target.value)}/>}<button className="secondary" disabled={busy} onClick={()=>void searchLibrary()}>Buscar</button></div><div className="items">{(results ?? documents).map(d=><button className="item" key={d.id} onClick={()=>openDoc(d)}><FileText size={20}/><span><strong>{d.fileName}</strong><small>{new Date(d.createdAt).toLocaleString('pt-BR')}</small></span><span className="chip">{d.status}</span><ChevronRight size={15}/></button>)}</div></section>}
+      {view === 'documents' && <section className="panel"><div className="panel-title"><div><h2>Biblioteca documental</h2><p>Busca por tipo, campo indexado ou texto OCR</p></div><FileSearch size={21}/></div><input placeholder="Pesquisar documentos..." value={search} onChange={e=>setSearch(e.target.value)}/><div className="inline"><select aria-label="Tipo de documento" value={filterType} onChange={e=>{setFilterType(e.target.value);setFilterField('');setFilterValue('')}}><option value="">Todos os tipos</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>{filterType && <select aria-label="Campo indexado" value={filterField} onChange={e=>setFilterField(e.target.value)}><option value="">Qualquer campo</option>{types.find(t=>t.id===filterType)?.fields.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{filterField && <input aria-label="Valor do campo" value={filterValue} onChange={e=>setFilterValue(e.target.value)}/>}<button className="secondary" disabled={busy} onClick={()=>void searchLibrary()}>Buscar</button></div><div className="items">{(results ?? documents).map(d=><button className="item" key={d.id} onClick={()=>openDoc(d)}><FileText size={20}/><span><strong>{d.fileName}</strong><small>{new Date(d.createdAt).toLocaleString('pt-BR')}</small></span><span className="chip">{d.status}</span><ChevronRight size={15}/></button>)}</div>{results && <div className="inline library-pages">
+        <button className="secondary" disabled={busy || libraryPage === 1} onClick={()=>void searchLibrary(libraryPage - 1, true)}>Anterior</button>
+        <span>Página {libraryPage}</span>
+        <button className="secondary" disabled={busy || !hasMore} onClick={()=>void searchLibrary(libraryPage + 1, true)}>Próxima</button>
+      </div>}</section>}
       {view === 'models' && <section className="panel"><div className="panel-title"><div><h2>Catálogo de modelos</h2><p>Estruturas criadas sem código</p></div><Layers size={22}/></div><div className="items">{types.length===0&&<p className="muted">Nenhum modelo criado. Vá à Central de digitalização para ensinar o primeiro.</p>}{types.map(t=><div className="item" key={t.id}><Layers size={20}/><span><strong>{t.name}</strong><small>{t.fields.map(f=>f.label).join(' · ')}</small></span><span className="chip">v{t.version}</span></div>)}</div></section>}
       {view === 'batches' && <section className="panel"><div className="panel-title"><div><h2>Lotes de digitalização</h2><p>Organize o processamento em grupos</p></div><FolderOpen size={21}/></div><div className="inline"><input placeholder="Nome do novo lote" value={batchName} onChange={e=>setBatchName(e.target.value)}/><button className="primary" disabled={!batchName.trim()||busy} onClick={()=>void perform(async()=>{await api('/batches',{method:'POST',body:JSON.stringify({name:batchName})});setBatchName('')})}><Plus size={16}/> Criar lote</button></div><div className="items">{batches.map(b=><div className="item" key={b.id}><FolderOpen size={20}/><span><strong>{b.name}</strong><small>{documents.filter(d=>d.batchId===b.id).length} documento(s)</small></span><span className="chip">{b.status}</span>{b.status==='Open'&&<button className="secondary" disabled={busy} onClick={()=>void perform(async()=>{await api(`/batches/${b.id}/close`,{method:'POST'});setNotice('Lote finalizado')})}>Finalizar</button>}</div>)}</div></section>}
       {view === 'physical' && <div className="workspace"><section className="panel"><div className="panel-title"><div><h2>Localizações dinâmicas</h2><p>Depósito → Fileira → Estante → Prateleira</p></div><Archive size={21}/></div><label className="control"><span>Nome</span><input value={locationName} onChange={e=>setLocationName(e.target.value)} placeholder="Ex.: Corredor 03"/></label><label className="control"><span>Tipo</span><input value={locationKind} onChange={e=>setLocationKind(e.target.value)}/></label><label className="control"><span>Dentro de</span><select value={locationParent} onChange={e=>setLocationParent(e.target.value)}><option value="">Raiz</option>{locations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><button className="primary full" disabled={!locationName.trim()||busy} onClick={()=>void perform(async()=>{await api('/locations',{method:'POST',body:JSON.stringify({name:locationName,kind:locationKind,parentId:locationParent||null})});setLocationName('')})}>Adicionar localização</button><div className="items">{locations.map(l=><div className="item" key={l.id}><Archive size={17}/><span><strong>{l.name}</strong><small>{l.kind} · {locations.find(p=>p.id===l.parentId)?.name||'Raiz'}</small></span></div>)}</div></section><section className="panel"><div className="panel-title"><div><h2>Caixas e rastreabilidade</h2><p>Vincule caixas a locais e documentos</p></div><Boxes size={21}/></div><label className="control"><span>Código da caixa</span><input value={boxCode} onChange={e=>setBoxCode(e.target.value)} placeholder="CX-00125"/></label><label className="control"><span>Localização</span><select value={boxLocation} onChange={e=>setBoxLocation(e.target.value)}><option value="">Selecione...</option>{locations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><button className="primary full" disabled={!boxCode||!boxLocation||busy} onClick={()=>void perform(async()=>{await api('/boxes',{method:'POST',body:JSON.stringify({code:boxCode,locationId:boxLocation})});setBoxCode('')})}>Cadastrar caixa</button><div className="items">{boxes.map(b=><button className="item" key={b.id} onClick={()=>void perform(async()=>{const result=await api<{route:{name:string}[];code:string}>(`/boxes/${b.id}/route`);setRoute(result.route.map(r=>r.name).join(' → ')+' → '+result.code)})}><Boxes size={17}/><span><strong>{b.code}</strong><small>Ver rota física</small></span><ChevronRight size={15}/></button>)}</div>{route&&<div className="route">{route}</div>}{selected&&<><div className="divider"/><label className="control"><span>Vincular caixa a {selected.fileName}</span><select value={assignBoxId} onChange={e=>setAssignBoxId(e.target.value)}><option value="">Selecione...</option>{boxes.map(b=><option key={b.id} value={b.id}>{b.code}</option>)}</select></label><button className="secondary full" disabled={!assignBoxId||busy} onClick={()=>void perform(async()=>{const d=await api<GedDocument>(`/documents/${selected.id}/box`,{method:'POST',body:JSON.stringify({boxId:assignBoxId})});setSelected(d);setNotice('Caixa vinculada')})}>Associar documento</button></>}</section></div>}

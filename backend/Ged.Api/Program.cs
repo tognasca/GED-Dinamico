@@ -97,31 +97,35 @@ api.MapPost("/types/preview", async (HttpContext ctx, GedDbContext db, PreviewTy
     return Results.Ok(extractor.Extract(doc.OcrText, request.Fields));
 });
 
-api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId, string? q, Guid? typeId, string? field, string? value) =>
+api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId, string? q,
+    Guid? typeId, string? field, string? value, int? page, int? pageSize) =>
 {
     var tenant = Tenant(ctx);
-    var docs = db.Documents.AsNoTracking().Where(x => x.TenantId == tenant);
-    if (batchId.HasValue) docs = docs.Where(x => x.BatchId == batchId.Value);
-    if (typeId.HasValue) docs = docs.Where(x => x.DocumentTypeId == typeId.Value);
+    var size = Math.Clamp(pageSize ?? 100, 1, 100);
+    var offset = (Math.Clamp(page ?? 1, 1, 100_000) - 1) * size;
+    IQueryable<GedDocument> docs = db.Documents;
     if (!string.IsNullOrWhiteSpace(field) && !string.IsNullOrWhiteSpace(value))
     {
         if (!typeId.HasValue || !await db.DocumentTypes.AsNoTracking()
-            .AnyAsync(t => t.Id == typeId.Value && t.TenantId == tenant))
+            .AnyAsync(t => t.Id == typeId.Value && t.TenantId == tenant, ctx.RequestAborted))
             return Results.BadRequest(new { error = "Selecione um tipo de documento válido." });
-        var matches = new List<GedDocument>();
-        await foreach (var doc in docs.Where(d => d.Status == "Indexed" &&
-            (q == null || q == "" || d.FileName.Contains(q) || d.OcrText.Contains(q)))
-            .OrderByDescending(d => d.CreatedAt).AsAsyncEnumerable().WithCancellation(ctx.RequestAborted))
-        {
-            var fields = JsonSerializer.Deserialize<Dictionary<string, FieldResult>>(doc.ValuesJson, JsonOptions.Default);
-            if (fields?.TryGetValue(field, out var result) == true &&
-                result.Value.Contains(value, StringComparison.OrdinalIgnoreCase)) matches.Add(doc);
-            if (matches.Count == 100) break;
-        }
-        return Results.Ok(matches.Select(ViewDocument));
+
+        docs = db.Documents.FromSql($"""
+            SELECT * FROM "Documents"
+            WHERE "TenantId" = {tenant} AND "DocumentTypeId" = {typeId.Value}
+              AND "Status" = 'Indexed'
+              AND strpos(lower("ValuesJson" -> CAST({field} AS text) ->> 'value'), lower({value})) > 0
+            """);
     }
+
+    docs = docs.AsNoTracking().Where(x => x.TenantId == tenant);
+    if (batchId.HasValue) docs = docs.Where(x => x.BatchId == batchId.Value);
+    if (typeId.HasValue) docs = docs.Where(x => x.DocumentTypeId == typeId.Value);
     if (!string.IsNullOrWhiteSpace(q)) docs = docs.Where(x => x.FileName.Contains(q) || x.OcrText.Contains(q));
-    return Results.Ok((await docs.OrderByDescending(x => x.CreatedAt).Take(100).ToListAsync()).Select(ViewDocument));
+    var results = await docs.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+        .Skip(offset).Take(size + (page.HasValue ? 1 : 0)).ToListAsync(ctx.RequestAborted);
+    if (page.HasValue) return Results.Ok(new { items = results.Take(size).Select(ViewDocument), hasMore = results.Count > size });
+    return Results.Ok(results.Take(size).Select(ViewDocument));
 });
 
 api.MapGet("/documents/{id:guid}", async (Guid id, HttpContext ctx, GedDbContext db) =>
