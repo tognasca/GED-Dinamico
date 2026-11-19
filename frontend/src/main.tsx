@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { Archive, Boxes, CheckCircle2, ChevronRight, CloudUpload, FileSearch, FileText, FolderOpen, Layers, LoaderCircle, Plus, ScanLine, Settings2, Sparkles, XCircle } from 'lucide-react';
 import { api, API_URL, DEMO_TENANT, type Batch, type DocumentType, type Field, type FieldResult, type GedDocument, type Suggestion } from './api';
 import './style.css';
+import LayoutRuleEditor from './LayoutRuleEditor';
 
 const PdfPicker = lazy(() => import('./PdfPicker'));
 
@@ -242,7 +243,7 @@ function App() {
               <div className={`review-grid review-tab-${reviewTab}`}>
                 {fileUrl && (selected.contentType === 'application/pdf'
                   ? pickField ? <Suspense fallback={<p className="review-file">Abrindo seleção do PDF…</p>}>
-                    <PdfPicker key={selected.id + pickField.key} url={fileUrl} field={pickField.label}
+                    <PdfPicker key={selected.id + pickField.key} url={fileUrl} documentId={selected.id} field={pickField.label}
                       onCancel={() => { setPickField(undefined); setReviewTab('fields'); }}
                       onPick={value => {
                         setCorrections(previous => ({ ...previous, [pickField.key]: value }));
@@ -272,6 +273,9 @@ function App() {
                       {fileUrl && selected.contentType === 'application/pdf' && <button type="button" className="secondary"
                         aria-pressed={pickField?.key === field.key}
                         onClick={() => { setPickField(field); setReviewTab('file'); }}>Selecionar no PDF</button>}
+                      {corrections[field.key]?.trim() && selected.ocrStatus === 'Completed' &&
+                        <LayoutRuleEditor document={selected} documents={documents} field={field}
+                          version={current.version} onSaved={() => void reload()}/>}
                       {evidence && <details><summary>Ver trecho reconhecido</summary>
                         <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
                       </details>}

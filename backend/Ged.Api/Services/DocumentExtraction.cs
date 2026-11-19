@@ -94,7 +94,7 @@ public sealed class DocumentExtraction
                     value = FindLabeledValue(lines, label, labels);
                 if (!string.IsNullOrWhiteSpace(value))
                 {
-                    source = "label";
+                    source = matchingAnchors.Contains(label, StringComparer.OrdinalIgnoreCase) ? "layout-anchor" : "label";
                     break;
                 }
             }

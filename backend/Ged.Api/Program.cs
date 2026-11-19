@@ -9,7 +9,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<GedDbContext>(x => x.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddSingleton<IStorageProvider, LocalStorageProvider>();
 builder.Services.AddHttpClient("Docling", client => client.Timeout = TimeSpan.FromSeconds(90));
-builder.Services.AddSingleton<IOcrProvider, TesseractOcrProvider>();
+builder.Services.AddSingleton<TesseractOcrProvider>();
+builder.Services.AddSingleton<IOcrProvider>(services => services.GetRequiredService<TesseractOcrProvider>());
 builder.Services.AddSingleton<DocumentExtraction>();
 if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("FolderImport:Enabled"))
     builder.Services.AddHostedService<FolderImportWorker>();
@@ -208,6 +209,64 @@ api.MapPost("/documents/{id:guid}/confirm", async (Guid id, ConfirmRequest reque
     return Results.Ok(ViewDocument(doc));
 });
 
+api.MapPost("/documents/{id:guid}/pages/{page:int}/ocr", async (Guid id, int page, HttpContext ctx,
+    GedDbContext db, IStorageProvider storage, TesseractOcrProvider ocr, CancellationToken ct) =>
+{
+    var tenant = Tenant(ctx);
+    var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id && d.TenantId == tenant, ct);
+    if (doc is null) return Results.NotFound();
+    if (doc.ContentType != "application/pdf" || page is < 1 or > 30)
+        return Results.BadRequest(new { error = "A seleção por OCR está disponível nas primeiras 30 páginas de PDFs." });
+    try
+    {
+        await using var file = await storage.OpenReadAsync(tenant, doc.StorageKey, ct);
+        return Results.Ok(await ocr.ReadPdfPageAsync(file, page, ct));
+    }
+    catch (Exception error) when (!ct.IsCancellationRequested)
+    {
+        app.Logger.LogWarning(error, "Page OCR failed for document {DocumentId}", id);
+        return Results.Problem("Não foi possível ler esta página. Você pode digitar o valor.", statusCode: 502);
+    }
+});
+
+api.MapPost("/types/{id:guid}/layout-rule", async (Guid id, LayoutRuleRequest request, HttpContext ctx,
+    GedDbContext db, DocumentExtraction extractor, CancellationToken ct) =>
+{
+    var tenant = Tenant(ctx);
+    var type = await db.DocumentTypes.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id && t.TenantId == tenant && t.Active, ct);
+    if (type is null) return Results.NotFound();
+    if (type.Version != request.Version) return Results.Conflict(new { error = "O modelo mudou. Atualize a tela e teste novamente." });
+    var marker = request.Marker?.Trim() ?? "";
+    var label = request.Anchor?.Trim() ?? "";
+    if (marker.Length is < 2 or > 200 || label.Length is < 2 or > 200 || request.DocumentId == request.TestDocumentId)
+        return Results.BadRequest(new { error = "Informe o identificador e o rótulo e escolha outro documento para testar." });
+    var documents = await db.Documents.AsNoTracking().Where(d => d.TenantId == tenant &&
+        (d.Id == request.DocumentId || d.Id == request.TestDocumentId) && d.OcrStatus == "Completed").ToListAsync(ct);
+    var source = documents.SingleOrDefault(d => d.Id == request.DocumentId && d.DocumentTypeId == id);
+    var test = documents.SingleOrDefault(d => d.Id == request.TestDocumentId);
+    if (source is null || test is null) return Results.NotFound();
+    if (source.Sha256 == test.Sha256 || !source.OcrText.Contains(marker, StringComparison.OrdinalIgnoreCase) ||
+        !test.OcrText.Contains(marker, StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Use dois arquivos diferentes que contenham o identificador do layout." });
+    var fields = type.Fields;
+    var index = fields.FindIndex(f => f.Key == request.FieldKey);
+    if (index < 0) return Results.BadRequest(new { error = "Campo não encontrado no modelo." });
+    var field = fields[index];
+    var rules = (field.Layouts ?? []).Where(rule => !string.Equals(rule.Marker, marker, StringComparison.OrdinalIgnoreCase)).ToList();
+    rules.Add(new LayoutAnchor(marker, label));
+    fields[index] = field with { Layouts = rules };
+    var result = extractor.Extract(test.OcrText, fields)[field.Key];
+    var value = result.Source == "layout-anchor" ? result.Value : "";
+    if (!request.Publish) return Results.Ok(new { value });
+    if (string.IsNullOrWhiteSpace(value) || !string.Equals(value, request.Expected?.Trim(), StringComparison.Ordinal))
+        return Results.BadRequest(new { error = "O valor testado deve corresponder ao valor conferido no arquivo de teste." });
+    var json = JsonSerializer.Serialize(fields, JsonOptions.Default);
+    var changed = await db.DocumentTypes.Where(t => t.Id == id && t.TenantId == tenant && t.Version == request.Version && t.Active)
+        .ExecuteUpdateAsync(update => update.SetProperty(t => t.FieldsJson, json).SetProperty(t => t.Version, t => t.Version + 1), ct);
+    if (changed == 0) return Results.Conflict(new { error = "O modelo mudou. Atualize a tela e teste novamente." });
+    return Results.Ok(new { value, version = type.Version + 1 });
+});
+
 api.MapGet("/documents/{id:guid}/file", async (Guid id, HttpContext ctx, GedDbContext db, IStorageProvider storage, CancellationToken ct) =>
 {
     var tenant = Tenant(ctx);
@@ -336,3 +395,5 @@ public sealed record NameRequest(string Name);
 public sealed record LocationRequest(string Name, string? Kind, Guid? ParentId);
 public sealed record BoxRequest(string Code, Guid LocationId);
 public sealed record AssignBoxRequest(Guid BoxId);
+
+public sealed record LayoutRuleRequest(int Version, Guid DocumentId, Guid TestDocumentId, string FieldKey, string? Marker, string? Anchor, bool Publish, string? Expected);

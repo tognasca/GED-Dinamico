@@ -85,6 +85,40 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         finally { Directory.Delete(temp, true); }
     }
 
+    public async Task<IReadOnlyList<OcrWord>> ReadPdfPageAsync(Stream file, int page, CancellationToken ct)
+    {
+        var directory = Directory.CreateTempSubdirectory("ged-page-");
+        try
+        {
+            var input = Path.Combine(directory.FullName, "input.pdf");
+            await using (var output = File.Create(input))
+                await file.CopyToAsync(output, ct);
+            var outputBase = Path.Combine(directory.FullName, "page");
+            var number = page.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            await Execute(configuration["Ocr:PdfToPpm"] ?? "pdftoppm",
+                ["-f", number, "-l", number, "-singlefile", "-scale-to", "2200", "-png", input, outputBase], ct);
+            if (!File.Exists(outputBase + ".png")) return [];
+            var tsv = await Execute(configuration["Ocr:Tesseract"] ?? "tesseract",
+                [outputBase + ".png", "stdout", "-l", configuration["Ocr:Languages"] ?? "por+eng", "tsv"], ct);
+            var words = new List<OcrWord>();
+            int pageWidth = 0, pageHeight = 0;
+            foreach (var line in tsv.Split('\n').Skip(1))
+            {
+                var columns = line.Split('\t', 12);
+                if (columns.Length != 12 || !int.TryParse(columns[6], out var left) ||
+                    !int.TryParse(columns[7], out var top) || !int.TryParse(columns[8], out var width) ||
+                    !int.TryParse(columns[9], out var height)) continue;
+                if (columns[0] == "1") (pageWidth, pageHeight) = (width, height);
+                if (columns[0] != "5" || pageWidth <= 0 || pageHeight <= 0 ||
+                    string.IsNullOrWhiteSpace(columns[11])) continue;
+                words.Add(new OcrWord(columns[11].Trim(), (double)left / pageWidth, (double)top / pageHeight,
+                    (double)width / pageWidth, (double)height / pageHeight));
+            }
+            return words;
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     private async Task<string> ReadWithDoclingAsync(string path, CancellationToken ct, string? serviceUrl = null)
     {
         using var client = clients.CreateClient("Docling");
@@ -130,3 +164,5 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         catch (OperationCanceledException) { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
     }
 }
+
+public sealed record OcrWord(string Text, double Left, double Top, double Width, double Height);
