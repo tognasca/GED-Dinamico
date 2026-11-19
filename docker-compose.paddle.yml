@@ -1,0 +1,10 @@
+services:
+  api:
+    environment:
+      Ocr__PaddleUrl: http://paddle:8000
+    depends_on:
+      paddle:
+        condition: service_started
+  paddle:
+    build: ./services/paddle
+    restart: unless-stopped

@@ -19,7 +19,7 @@
 @media (max-width: 900px) {
   .review-tabs { display: flex; gap: .5rem; margin-bottom: .75rem; }
   .review-tabs button { flex: 1; padding: .65rem; border: 1px solid #b8cfcc; border-radius: 8px; }
-  .review-fields .review-file, .review-file .review-form .review-form { display: none; }
+  .review-tab-fields > .review-file, .review-tab-file > .review-form { display: none; }
   .review-actions .primary { width: 100%; justify-content: center; }
 }
 
@@ -74,4 +74,24 @@
 .entry-options .field-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; }
 @media (max-width: 640px) {
   .entry-options .field-row { grid-template-columns: minmax(0, 1fr) auto; }
+}
+
+/* Keep touch targets and long document names usable on narrow screens. */
+.ged-shell :is(button, input, select, summary) { min-height: 44px; }
+.ged-shell :is(.panel, .entry, .review, .review-form, .item, .inline) { min-width: 0; }
+.ged-shell .item :is(span, strong) { overflow-wrap: anywhere; }
+.ged-shell .inline { flex-wrap: wrap; }
+.ged-shell .inline :is(input, select) { flex-basis: 180px; }
+.ged-shell .review-actions { z-index: 5; padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
+.ged-shell :is(button, summary, a):focus-visible { outline: 3px solid #00857f; outline-offset: 3px; }
+@media (max-width: 640px) {
+  .ged-shell input:not([type=checkbox]), .ged-shell select { font-size: 16px; }
+  .ged-shell .review-nav { gap: .5rem; padding: .75rem; }
+  .ged-shell .review-nav nav { width: 100%; flex-wrap: nowrap; overflow-x: auto; }
+  .ged-shell .review-nav nav button { flex-shrink: 0; }
+  .ged-shell .item { flex-wrap: wrap; gap: .5rem; }
+  .ged-shell .item > span { flex-basis: calc(100% - 40px); }
+  .ged-shell .item > small { white-space: normal; }
+  .ged-shell .primary, .ged-shell .secondary { white-space: normal; }
+  .ged-shell .review-tabs { position: sticky; top: 0; background: #fafaf9; z-index: 4; padding: .5rem 0; }
 }

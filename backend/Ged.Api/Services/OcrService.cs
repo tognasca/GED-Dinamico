@@ -58,6 +58,18 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
                     }
                 }
 
+                if (!string.IsNullOrWhiteSpace(configuration["Ocr:PaddleUrl"]))
+                {
+                    try
+                    {
+                        return await ReadWithDoclingAsync(input, ct, configuration["Ocr:PaddleUrl"]);
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning("Paddle OCR failed ({ErrorType}); continuing with Tesseract", error.GetType().Name);
+                    }
+                }
+
                 await Execute(configuration["Ocr:PdfToPpm"] ?? "pdftoppm", ["-f", "1", "-l", "30", "-r", "200", "-png", input, Path.Combine(temp, "page")], ct);
                 pages.AddRange(Directory.GetFiles(temp, "page-*.png").OrderBy(x => x, StringComparer.Ordinal));
                 if (pages.Count == 0) throw new InvalidOperationException("PDF has no readable pages");
@@ -73,7 +85,7 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         finally { Directory.Delete(temp, true); }
     }
 
-    private async Task<string> ReadWithDoclingAsync(string path, CancellationToken ct)
+    private async Task<string> ReadWithDoclingAsync(string path, CancellationToken ct, string? serviceUrl = null)
     {
         using var client = clients.CreateClient("Docling");
         using var form = new MultipartFormDataContent();
@@ -85,7 +97,7 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         form.Add(new StringContent("true"), "do_ocr");
         form.Add(new StringContent("1"), "page_range");
         form.Add(new StringContent("30"), "page_range");
-        var endpoint = configuration["Ocr:DoclingUrl"]!.TrimEnd('/') + "/v1/convert/file";
+        var endpoint = (serviceUrl ?? configuration["Ocr:DoclingUrl"])!.TrimEnd('/') + "/v1/convert/file";
         using var response = await client.PostAsync(endpoint, form, ct);
         response.EnsureSuccessStatusCode();
         await using var body = await response.Content.ReadAsStreamAsync(ct);
