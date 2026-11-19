@@ -95,3 +95,10 @@
   .ged-shell .primary, .ged-shell .secondary { white-space: normal; }
   .ged-shell .review-tabs { position: sticky; top: 0; background: #fafaf9; z-index: 4; padding: .5rem 0; }
 }
+
+.pdf-picker { min-width: 0; align-self: start; padding: 1rem; border-radius: 10px; background: #edf2f1; }
+.pdf-picker-scroll { max-height: 58dvh; overflow: auto; margin-bottom: .75rem; }
+.pdf-picker-sheet { position: relative; width: max-content; background: white; }
+.pdf-picker-sheet canvas { display: block; width: auto; max-width: none; }
+.pdf-picker-sheet .textLayer .picked-text { background: #49bdbb80; }
+.pdf-field-label { margin: 0; }

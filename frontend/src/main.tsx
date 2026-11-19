@@ -1,8 +1,11 @@
+import { lazy, Suspense } from 'react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Archive, Boxes, CheckCircle2, ChevronRight, CloudUpload, FileSearch, FileText, FolderOpen, Layers, LoaderCircle, Plus, ScanLine, Settings2, Sparkles, XCircle } from 'lucide-react';
 import { api, API_URL, DEMO_TENANT, type Batch, type DocumentType, type Field, type FieldResult, type GedDocument, type Suggestion } from './api';
 import './style.css';
+
+const PdfPicker = lazy(() => import('./PdfPicker'));
 
 type View = 'review' | 'capture' | 'models' | 'documents' | 'batches' | 'physical';
 const defaultField = (): Field => ({ key: '', label: '', dataType: 'text', required: false, anchor: '' });
@@ -66,6 +69,7 @@ function App() {
   const [testId, setTestId] = useState('');
   const [preview, setPreview] = useState<{ signature: string; values: Record<string, FieldResult> }>();
   const [onlyPending, setOnlyPending] = useState(false);
+  const [pickField, setPickField] = useState<Field>();
   const [reviewTab, setReviewTab] = useState<'fields' | 'file'>('fields');
   const [fileUrl, setFileUrl] = useState('');
   const [filterType, setFilterType] = useState('');
@@ -79,6 +83,7 @@ function App() {
   useEffect(() => {
     setFileUrl('');
     setReviewTab('fields');
+    setPickField(undefined);
     setOnlyPending(false);
     if (!selected || (selected.contentType !== 'application/pdf' && !selected.contentType.startsWith('image/'))) return;
     const controller = new AbortController();
@@ -236,7 +241,16 @@ function App() {
               </div>}
               <div className={`review-grid review-tab-${reviewTab}`}>
                 {fileUrl && (selected.contentType === 'application/pdf'
-                  ? <iframe className="review-file" title="PDF para conferência" src={fileUrl}/>
+                  ? pickField ? <Suspense fallback={<p className="review-file">Abrindo seleção do PDF…</p>}>
+                    <PdfPicker key={selected.id + pickField.key} url={fileUrl} field={pickField.label}
+                      onCancel={() => { setPickField(undefined); setReviewTab('fields'); }}
+                      onPick={value => {
+                        setCorrections(previous => ({ ...previous, [pickField.key]: value }));
+                        setPickField(undefined);
+                        setReviewTab('fields');
+                        setNotice(`${pickField.label} preenchido a partir do PDF.`);
+                      }}/>
+                  </Suspense> : <iframe className="review-file" title="PDF para conferência" src={fileUrl}/>
                   : <div className="review-file review-image">
                       {selected.contentType !== 'image/tiff' && <img src={fileUrl} alt={selected.fileName}/>}
                       <a href={fileUrl} download={selected.fileName}>{selected.contentType === 'image/tiff' ? 'Baixar imagem TIFF para conferir' : 'Baixar imagem original'}</a>
@@ -250,14 +264,18 @@ function App() {
                     const issue = reviewIssue(field, value, corrections[field.key] === undefined ? selected.values?.[field.key]?.source : undefined);
                     if (onlyPending && !issue) return null;
                     const evidence = corrections[field.key] === undefined ? sourceExcerpt(selected.ocrText, value) : null;
-                    return <label className="control" key={field.key}>
+                    return <div className="control" key={field.key}><label className="control pdf-field-label">
                       <span>{field.label}{field.required ? ' *' : ''}</span>
                       <input value={value} aria-invalid={Boolean(issue && (field.required || value.trim()))} onChange={e=>setCorrections(previous=>({...previous,[field.key]:e.target.value}))}/>
                       {issue && <small className="field-warning">{issue}</small>}
+                      </label>
+                      {fileUrl && selected.contentType === 'application/pdf' && <button type="button" className="secondary"
+                        aria-pressed={pickField?.key === field.key}
+                        onClick={() => { setPickField(field); setReviewTab('file'); }}>Selecionar no PDF</button>}
                       {evidence && <details><summary>Ver trecho reconhecido</summary>
                         <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
                       </details>}
-                    </label>;
+                    </div>;
                   })}
                 </div>
               </div>
