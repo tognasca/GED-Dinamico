@@ -9,10 +9,12 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 
 type OcrWord = { text: string; left: number; top: number; width: number; height: number };
 
-export default function PdfPicker({ url, documentId, field, onPick, onCancel }: {
+export default function PdfPicker({ url, documentId, field, instruction, confirmLabel, onPick, onCancel }: {
   url: string;
   documentId: string;
   field: string;
+  instruction?: string;
+  confirmLabel?: string;
   onPick: (text: string) => void;
   onCancel: () => void;
 }) {
@@ -105,7 +107,7 @@ export default function PdfPicker({ url, documentId, field, onPick, onCancel }: 
       <span>Página {page}{pdf ? ` de ${pdf.numPages}` : ''}</span>
       <button type="button" className="secondary" disabled={reading || !pdf || page >= pdf.numPages} onClick={() => changePage(page + 1)}>Próxima</button>
     </div>
-    <p>Toque no texto ou selecione o trecho para preencher <strong>{field}</strong>.</p>
+    <p>{instruction || <>Toque no texto ou selecione o trecho para preencher <strong>{field}</strong>.</>}</p>
     {scan && words.length === 0 && page <= 30 && <button type="button" className="secondary" disabled={reading}
       onClick={() => void readScan()}>{reading ? 'Lendo página…' : 'Reconhecer texto da página'}</button>}
     {scan && page > 30 && <p>O reconhecimento abrange as primeiras 30 páginas.</p>}
@@ -125,7 +127,7 @@ export default function PdfPicker({ url, documentId, field, onPick, onCancel }: 
     </label>}
     <div className="inline">
       <button type="button" className="secondary" onClick={onCancel}>Voltar ao PDF</button>
-      <button type="button" className="primary" disabled={!choice.trim() || !!error} onClick={() => onPick(choice.trim())}>Usar neste campo</button>
+      <button type="button" className="primary" disabled={!choice.trim() || !!error} onClick={() => onPick(choice.trim())}>{confirmLabel || 'Usar neste campo'}</button>
     </div>
   </div>;
 }

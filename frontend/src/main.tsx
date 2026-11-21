@@ -273,9 +273,10 @@ function App() {
                       {fileUrl && selected.contentType === 'application/pdf' && <button type="button" className="secondary"
                         aria-pressed={pickField?.key === field.key}
                         onClick={() => { setPickField(field); setReviewTab('file'); }}>Selecionar no PDF</button>}
-                      {corrections[field.key]?.trim() && selected.ocrStatus === 'Completed' &&
+                      {selected.ocrStatus === 'Completed' &&
                         <LayoutRuleEditor document={selected} documents={documents} field={field}
-                          version={current.version} onSaved={() => void reload()}/>}
+                          version={current.version} sourceUrl={fileUrl} currentValue={value}
+                          onSaved={() => { setNotice('Regra salva para os próximos documentos.'); void reload(); }}/>}
                       {evidence && <details><summary>Ver trecho reconhecido</summary>
                         <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
                       </details>}
