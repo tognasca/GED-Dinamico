@@ -175,3 +175,43 @@ test('images keep their original visible and offer manual configuration', async 
     assert.equal(ui.button('Marcar rótulo no PDF'), undefined);
   } finally { await ui.cleanup(); }
 });
+
+test('daily review hides teaching controls and preserves corrections when teaching is opened', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
+  for (const key of ['window', 'document', 'HTMLElement', 'HTMLDialogElement', 'Event', 'MouseEvent']) global[key] = dom.window[key];
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  URL.createObjectURL = () => 'blob:test'; URL.revokeObjectURL = () => {};
+  const doc = { ...source, values: { placa: { value: 'TST1A10', source: 'layout-anchor', confidence: 1 } }, status: 'NeedsReview', suggestions: [], createdAt: '2026-11-20T12:00:00Z' };
+  const type = { id: 'type', name: 'Apólice Auto', version: 3, active: true, keywords: [], fields: [{ key: 'placa', label: 'Placa', dataType: 'text', required: true }] };
+  const writes = [];
+  global.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/file')) return new Response('pdf');
+    let data = [];
+    if (String(url).endsWith('/types')) data = [type];
+    if (String(url).endsWith('/documents')) data = [doc];
+    if (String(url).endsWith('/confirm')) { writes.push(JSON.parse(options.body)); data = { ...doc, status: 'Indexed' }; }
+    return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+  };
+  const result = await build({ entryPoints: [path.join(__dirname, '../src/main.tsx')], bundle: true, write: false, format: 'cjs', platform: 'node', jsx: 'automatic',
+    external: ['react', 'react/jsx-runtime', 'react-dom/client'], loader: { '.css': 'empty' },
+    plugins: [{ name: 'pdf-selection', setup(builder) { builder.onLoad({ filter: /\/PdfPicker\.tsx$/ }, () => ({ loader: 'jsx', contents: 'export default function Picker() { return null; }' })); } }],
+  });
+  const loaded = new Module(path.join(__dirname, 'app.cjs'), module);
+  loaded.filename = path.join(__dirname, 'app.cjs'); loaded.paths = Module._nodeModulePaths(__dirname);
+  await act(async () => loaded._compile(result.outputFiles[0].text, loaded.filename));
+  const button = text => [...document.querySelectorAll('button')].find(el => el.textContent === text);
+  async function click(text) { assert.ok(button(text), text); await act(async () => button(text).click()); }
+  await click('Conferência'); await act(async () => document.querySelector('.review-queue .item').click());
+  assert.equal(button('Ensinar leitura de Placa'), undefined);
+  const input = document.querySelector('.pdf-field-label input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, 'TST2A20');
+    input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  });
+  await click('Ensinar este modelo'); await click('Ensinar leitura de Placa'); await click('Fechar'); await click('Encerrar ensino do modelo');
+  assert.equal(document.querySelector('.pdf-field-label input').value, 'TST2A20');
+  assert.equal(button('Ensinar leitura de Placa'), undefined); assert.equal(writes.length, 0);
+  await click(' Salvar na biblioteca'); assert.equal(writes[0].values.placa, 'TST2A20');
+  dom.window.close();
+});

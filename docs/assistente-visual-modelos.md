@@ -1,6 +1,6 @@
 # Ensinar a leitura de um campo
 
-O uso diário continua sendo importar, conferir e salvar. O assistente é uma tarefa de configuração e aparece no botão **Ensinar leitura de [nome do campo]**, na conferência. Ele não exige corrigir um campo apenas para tornar a opção visível.
+O uso diário continua sendo importar, conferir e salvar. Na conferência, clique em **Ensinar este modelo** e depois em **Ensinar leitura de [nome do campo]**. Para voltar à conferência simples, use **Encerrar ensino do modelo**. Ele não exige corrigir um campo apenas para tornar a opção visível.
 
 ## Antes de começar
 
