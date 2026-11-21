@@ -70,6 +70,7 @@ function App() {
   const [testId, setTestId] = useState('');
   const [preview, setPreview] = useState<{ signature: string; values: Record<string, FieldResult> }>();
   const [onlyPending, setOnlyPending] = useState(false);
+  const [teachingMode, setTeachingMode] = useState(false);
   const [pickField, setPickField] = useState<Field>();
   const [reviewTab, setReviewTab] = useState<'fields' | 'file'>('fields');
   const [fileUrl, setFileUrl] = useState('');
@@ -86,6 +87,7 @@ function App() {
     setReviewTab('fields');
     setPickField(undefined);
     setOnlyPending(false);
+    setTeachingMode(false);
     if (!selected || (selected.contentType !== 'application/pdf' && !selected.contentType.startsWith('image/'))) return;
     const controller = new AbortController();
     let url: string | undefined;
@@ -259,6 +261,10 @@ function App() {
                 <div className="review-form">
                   <h2>Campos do documento</h2>
                   <div className="review-model">{current.name}</div>
+                  <button type="button" className="secondary" aria-pressed={teachingMode} onClick={() => { setTeachingMode(!teachingMode); setOnlyPending(false); }}>
+                    {teachingMode ? 'Encerrar ensino do modelo' : 'Ensinar este modelo'}
+                  </button>
+                  {teachingMode && <p>Escolha abaixo a informação que deseja ensinar. Para corrigir apenas este documento, edite os valores e salve na biblioteca.</p>}
                   <label className="checkbox"><input type="checkbox" checked={onlyPending} onChange={e=>setOnlyPending(e.target.checked)}/> Mostrar só pendências</label>
                   {current.fields.map(field => {
                     const value = corrections[field.key] ?? selected.values?.[field.key]?.value ?? '';
@@ -273,9 +279,10 @@ function App() {
                       {fileUrl && selected.contentType === 'application/pdf' && <button type="button" className="secondary"
                         aria-pressed={pickField?.key === field.key}
                         onClick={() => { setPickField(field); setReviewTab('file'); }}>Selecionar no PDF</button>}
-                      {corrections[field.key]?.trim() && selected.ocrStatus === 'Completed' &&
+                      {teachingMode && selected.ocrStatus === 'Completed' &&
                         <LayoutRuleEditor document={selected} documents={documents} field={field}
-                          version={current.version} onSaved={() => void reload()}/>}
+                          version={current.version} sourceUrl={fileUrl} currentValue={value}
+                          onSaved={() => { setNotice('Regra salva para os próximos documentos.'); void reload(); }}/>}
                       {evidence && <details><summary>Ver trecho reconhecido</summary>
                         <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
                       </details>}
