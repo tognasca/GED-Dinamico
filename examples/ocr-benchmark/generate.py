@@ -1,4 +1,5 @@
 """Generate twelve synthetic policies and their ground truth."""
+import argparse
 import json
 import pymupdf
 from pathlib import Path
@@ -7,13 +8,19 @@ from tempfile import TemporaryDirectory
 from PIL import Image, ImageFilter
 from reportlab.pdfgen import canvas
 
-output = Path(__file__).with_name("fixtures")
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--pilot", action="store_true", help="Add controls with absent fields.")
+args = parser.parse_args()
+output = Path(__file__).with_name("fixtures-pilot" if args.pilot else "fixtures")
 output.mkdir(exist_ok=True)
 manifest = {}
-for i in range(12):
+for i in range(14 if args.pilot else 12):
     name = f"apolice-{i + 1:02}"
     fields = {"numero_apolice": f"202600{i + 10}", "placa": f"TST1A{i + 10}",
               "inicio_vigencia": f"{i + 1:02}/11/2026"}
+    if i >= 12:
+        name = f"scan-sem-placa-{i - 11:02}"
+        fields["placa"] = ""
     manifest[name + ".pdf"] = fields
     layout = i % 3
     with TemporaryDirectory() as scratch:
@@ -25,6 +32,8 @@ for i in range(12):
         for row, (label, value) in enumerate(zip(
             ("Número da apólice", "Placa", "Início da vigência"), fields.values()
         )):
+            if not value:
+                continue
             if layout == 0:
                 pdf.drawString(50, 730 - row * 28, f"{label}: {value}")
             elif layout == 1:

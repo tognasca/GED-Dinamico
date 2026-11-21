@@ -20,3 +20,54 @@ O teste passa com pelo menos 33 de 36 campos corretos, melhora sobre o texto
 simples e nenhum número de apólice incorreto entre os valores preenchidos.
 O teste avalia a extração isoladamente. O upload, o banco e o React devem ser
 validados separadamente antes de habilitar o recurso em produção.
+
+## Piloto de regressão do núcleo Docling
+
+O piloto roda em dois ambientes Python isolados e usa o mesmo extrator .NET
+do GED em ambos. Compare 2.142.1 (a versão do núcleo listada na release do
+Docling Serve 1.38.2) e 2.151.1. A comparação exercita o pipeline PDF padrão
+local em CPU com Tesseract CLI, não o endpoint Serve nem o caminho VLM.
+Valide a imagem Serve separadamente antes de trocar o serviço do GED.
+
+Em PowerShell, com Python 3.12, uv, SDK .NET 10 e Tesseract com `por` e `eng`,
+execute na pasta deste benchmark:
+
+```powershell
+tesseract --list-langs
+uv run --no-project --with pillow --with reportlab --with pymupdf python generate.py --pilot
+
+uv venv --python 3.12 .venv-baseline
+uv venv --python 3.12 .venv-candidate
+$baseline = '.\.venv-baseline\Scripts\python.exe'
+$candidate = '.\.venv-candidate\Scripts\python.exe'
+foreach ($python in @($baseline, $candidate)) {
+    uv pip install --python $python --index https://download.pytorch.org/whl/cpu 'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu'
+    if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar o runtime CPU' }
+}
+uv pip install --python $baseline 'docling==2.142.1'
+uv pip install --python $candidate 'docling==2.151.1'
+& $baseline capture_docling.py fixtures-pilot capture-baseline.json
+if ($LASTEXITCODE -ne 0) { throw 'Falha na captura de referência' }
+& $candidate capture_docling.py fixtures-pilot capture-candidate.json
+if ($LASTEXITCODE -ne 0) { throw 'Falha na captura candidata' }
+dotnet run --project Benchmark.csproj -- --compare-docling fixtures-pilot/expected.json capture-baseline.json capture-candidate.json
+```
+
+No Linux, use `.venv-baseline/bin/python` e `.venv-candidate/bin/python`.
+A primeira execução precisa baixar os pesos dos modelos. Gere os PDFs
+**uma vez por comparação**. As capturas registram hash, versão, idiomas e
+tempo por PDF, e recusam sobrescrever arquivos existentes. Use novos nomes
+para repetir o teste. Os JSONs de captura contêm texto de documentos,
+portanto mantenha-os locais se testar arquivos reais autorizados.
+
+A triagem usa 14 PDFs sintéticos (três layouts, digitais e escaneados,
+incluindo dois escaneados sem placa) e 42 campos esperados. O comparador
+exige pelo menos 95% de correspondência exata após normalizar espaços,
+Unicode e datas, nenhum campo antes correto perdido, nenhum número de
+apólice errado preenchido e zero preenchimentos de campos ausentes.
+O p95 de conversão exclui a inicialização dos pesos. Código de saída
+`0` aprova a triagem, `1` reprova e `2` indica entradas inválidas.
+A aprovação é um primeiro filtro. A promoção depende de validar a
+imagem do serviço, documentos autorizados representativos e a conferência
+no React. Contratos, notas fiscais e LangExtract ficam para uma etapa
+separada, após estabelecer a referência para apólices.
