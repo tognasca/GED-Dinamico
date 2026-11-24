@@ -49,3 +49,14 @@ jobs:
         run: |
           set -o pipefail
           dotnet run --project Benchmark.csproj --configuration Release --no-build -- --compare-docling fixtures-pilot/expected.json capture-baseline.json capture-candidate.json | tee "$GITHUB_STEP_SUMMARY"
+      - name: Preserve synthetic captures for diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-ocr-captures
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            examples/ocr-benchmark/capture-baseline.json
+            examples/ocr-benchmark/capture-candidate.json
+            examples/ocr-benchmark/fixtures-pilot/expected.json
