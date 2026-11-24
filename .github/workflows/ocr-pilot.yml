@@ -1,0 +1,51 @@
+name: OCR pilot
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/ocr-benchmark/**'
+      - 'backend/Ged.Api/Services/DocumentExtraction.cs'
+      - '.github/workflows/ocr-pilot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+        working-directory: examples/ocr-benchmark
+    env:
+      HF_HUB_DISABLE_XET: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Prepare the CPU runtime and fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-por tesseract-ocr-eng fonts-dejavu-core
+          python -m venv .venv-pilot
+          .venv-pilot/bin/pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu'
+          .venv-pilot/bin/pip install 'docling==2.151.1' 'docling-parse==7.27.0' reportlab pymupdf
+          .venv-pilot/bin/python generate.py --pilot --cmap-font /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          dotnet build Benchmark.csproj --configuration Release
+      - name: Capture the baseline
+        run: .venv-pilot/bin/python capture_docling.py fixtures-pilot capture-baseline.json
+      - name: Change only the parser and capture the candidate
+        run: |
+          .venv-pilot/bin/pip install --no-deps 'docling-parse==7.27.1'
+          .venv-pilot/bin/pip check
+          .venv-pilot/bin/python capture_docling.py fixtures-pilot capture-candidate.json
+      - name: Compare the 60 fields
+        run: |
+          set -o pipefail
+          dotnet run --project Benchmark.csproj --configuration Release --no-build -- --compare-docling fixtures-pilot/expected.json capture-baseline.json capture-candidate.json | tee "$GITHUB_STEP_SUMMARY"
