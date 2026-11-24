@@ -71,3 +71,31 @@ A aprovação é um primeiro filtro. A promoção depende de validar a
 imagem do serviço, documentos autorizados representativos e a conferência
 no React. Contratos, notas fiscais e LangExtract ficam para uma etapa
 separada, após estabelecer a referência para apólices.
+
+## Regressão de fontes ToUnicode
+
+Use `python generate.py --pilot --cmap-font CAMINHO_DA_FONTE.ttf` para
+adicionar seis PDFs digitais com fonte incorporada e duas faixas no CMap.
+O gabarito completo passa a ter 60 campos. Use uma fonte Latin TrueType,
+como DejaVu Sans, com os caracteres acentuados do exemplo.
+
+Em dois ambientes Python separados, instale respectivamente
+`docling-parse==7.27.0` e `docling-parse==7.27.1`. Em cada ambiente, execute
+`python capture_cmap.py fixtures-pilot capture-baseline-cmap.json`, trocando
+o nome da segunda saída por `capture-candidate-cmap.json`. Compare usando:
+
+```sh
+dotnet run --project Benchmark.csproj -- --compare-docling fixtures-pilot/expected-cmap.json capture-baseline-cmap.json capture-candidate-cmap.json
+```
+
+Essa triagem usa o parser diretamente e avalia 18 campos sem carregar
+modelos de OCR. No primeiro teste, as duas versões alcançaram 18/18. O
+conjunto sintético não reproduziu perda de campo na versão anterior.
+
+Para avaliar os 60 campos, use `capture_docling.py` e `expected.json`.
+Fixe o mesmo núcleo Docling nos dois ambientes e altere apenas
+`docling-parse`, desde que o resolvedor aceite ambas as versões. A captura
+registra as versões do núcleo e do parser. O critério do piloto ampliado é
+57/60 ou mais, zero preenchimentos indevidos, preservação dos acertos
+anteriores e pelo menos um erro corrigido nos casos novos para demonstrar
+ganho. A aprovação do comparador nos 18 campos sozinha indica paridade.

@@ -46,7 +46,7 @@ def main():
         samples[name] = {"text": value, "milliseconds": elapsed_ms, "sha256": fingerprint}
         print(f"{name}: {elapsed_ms} ms", flush=True)
     payload = {
-        "version": version("docling"),
+        "version": f"Docling {version('docling')} / parser {version('docling-parse')}",
         "languages": args.languages,
         "documents": samples,
     }
