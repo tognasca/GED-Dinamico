@@ -25,7 +25,7 @@ public sealed class DocumentType : TenantOwned
 
 public sealed record FieldDefinition(string Key, string Label, string DataType, bool Required, string? Regex = null, string? Anchor = null, List<LayoutAnchor>? Layouts = null);
 public sealed record LayoutAnchor(string Marker, string Anchor);
-public sealed record FieldResult(string Value, double Confidence, string Source);
+public sealed record FieldResult(string Value, double Confidence, string Source, Services.OcrEvidence? Evidence = null);
 
 public sealed class GedDocument : TenantOwned
 {
@@ -35,6 +35,8 @@ public sealed class GedDocument : TenantOwned
     public string Sha256 { get; set; } = "";
     public long FileSize { get; set; }
     public string OcrText { get; set; } = "";
+    public string? OcrProvider { get; set; }
+    public string OcrEvidenceJson { get; set; } = "[]";
     public string OcrStatus { get; set; } = "Pending";
     public string Status { get; set; } = "Uploaded";
     public Guid? DocumentTypeId { get; set; }

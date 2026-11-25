@@ -3,6 +3,12 @@ using System.Text.Json;
 using Ged.Api.Domain;
 using Ged.Api.Services;
 
+if (args.FirstOrDefault() == "--check-layer")
+    return await LayerChecks.RunAsync();
+
+if (args.FirstOrDefault() == "--compare-docling")
+    return await DoclingComparison.RunAsync(args.Skip(1).ToArray());
+
 var fixtures = args.Length > 0 ? args[0] : "fixtures";
 using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
 var endpoint = (Environment.GetEnvironmentVariable("DOCLING_URL") ?? "http://localhost:5001")

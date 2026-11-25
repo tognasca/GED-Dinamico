@@ -1,3 +1,7 @@
 /fixtures/
 /bin/
 /obj/
+/fixtures-pilot/
+/.venv*/
+/capture-*.json
+/__pycache__/

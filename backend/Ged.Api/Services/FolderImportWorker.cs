@@ -94,6 +94,7 @@ public sealed class FolderImportWorker(IServiceScopeFactory scopes, IConfigurati
 
         var storage = scope.ServiceProvider.GetRequiredService<IStorageProvider>();
         var ocr = scope.ServiceProvider.GetRequiredService<IOcrProvider>();
+        var evidence = scope.ServiceProvider.GetRequiredService<EvidenceExtraction>();
         var extractor = scope.ServiceProvider.GetRequiredService<DocumentExtraction>();
         var (key, savedHash, size) = await storage.PutAsync(DemoTenant, source, ct);
         var document = new GedDocument
@@ -106,7 +107,7 @@ public sealed class FolderImportWorker(IServiceScopeFactory scopes, IConfigurati
         try
         {
             await using var saved = await storage.OpenReadAsync(DemoTenant, key, ct);
-            document.OcrText = await ocr.ReadAsync(document.FileName, mime, saved, ct);
+            evidence.Store(document, await ocr.ReadAsync(document.FileName, mime, saved, ct));
             document.OcrStatus = "Completed";
             document.SuggestionsJson = JsonSerializer.Serialize(extractor.Suggest(document.OcrText), JsonOptions.Default);
             document.Status = "AwaitingTemplate";
@@ -117,7 +118,7 @@ public sealed class FolderImportWorker(IServiceScopeFactory scopes, IConfigurati
             {
                 document.DocumentTypeId = matched.Id;
                 document.DocumentTypeVersion = matched.Version;
-                document.ValuesJson = JsonSerializer.Serialize(extractor.Extract(document.OcrText, matched.Fields), JsonOptions.Default);
+                document.ValuesJson = JsonSerializer.Serialize(evidence.Extract(document, matched.Fields), JsonOptions.Default);
                 document.Status = "NeedsReview";
             }
         }

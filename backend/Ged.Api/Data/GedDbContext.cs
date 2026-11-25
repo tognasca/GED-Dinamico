@@ -23,6 +23,7 @@ public sealed class GedDbContext(DbContextOptions<GedDbContext> options) : DbCon
         model.Entity<DocumentType>().Ignore(x => x.Fields);
         model.Entity<DocumentType>().Ignore(x => x.Keywords);
 
+        model.Entity<GedDocument>().Property(x => x.OcrEvidenceJson).HasColumnType("jsonb");
         model.Entity<GedDocument>().Property(x => x.ValuesJson).HasColumnType("jsonb");
         model.Entity<GedDocument>().Property(x => x.SuggestionsJson).HasColumnType("jsonb");
         model.Entity<DocumentType>().Property(x => x.FieldsJson).HasColumnType("jsonb");

@@ -9,9 +9,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<GedDbContext>(x => x.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddSingleton<IStorageProvider, LocalStorageProvider>();
 builder.Services.AddHttpClient("Docling", client => client.Timeout = TimeSpan.FromSeconds(90));
+builder.Services.AddHttpClient("AzureOcr")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<TesseractOcrProvider>();
 builder.Services.AddSingleton<IOcrProvider>(services => services.GetRequiredService<TesseractOcrProvider>());
 builder.Services.AddSingleton<DocumentExtraction>();
+builder.Services.AddSingleton<EvidenceExtraction>();
 if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("FolderImport:Enabled"))
     builder.Services.AddHostedService<FolderImportWorker>();
 builder.Services.AddEndpointsApiExplorer();
@@ -56,7 +59,7 @@ var api = app.MapGroup("/api");
 static Guid Tenant(HttpContext ctx) => (Guid)ctx.Items["TenantId"]!;
 static object ViewDocument(GedDocument d) => new
 {
-    d.Id, d.FileName, d.ContentType, d.FileSize, d.OcrText, d.OcrStatus, d.Status,
+    d.Id, d.FileName, d.ContentType, d.FileSize, d.OcrText, d.OcrStatus, d.OcrProvider, d.Status,
     d.DocumentTypeId, d.DocumentTypeVersion, d.BatchId, d.PhysicalBoxId, d.CreatedAt,
     Values = JsonSerializer.Deserialize<Dictionary<string, FieldResult>>(d.ValuesJson, JsonOptions.Default),
     Suggestions = JsonSerializer.Deserialize<object>(d.SuggestionsJson, JsonOptions.Default)
@@ -87,7 +90,7 @@ api.MapPost("/types", async (HttpContext ctx, GedDbContext db, CreateTypeRequest
     return Results.Created($"/api/types/{type.Id}", new { type.Id, type.Name });
 });
 
-api.MapPost("/types/preview", async (HttpContext ctx, GedDbContext db, PreviewTypeRequest request, DocumentExtraction extractor) =>
+api.MapPost("/types/preview", async (HttpContext ctx, GedDbContext db, PreviewTypeRequest request, EvidenceExtraction extractor) =>
 {
     var tenant = Tenant(ctx);
     var doc = await db.Documents.AsNoTracking().FirstOrDefaultAsync(d => d.TenantId == tenant && d.Id == request.DocumentId);
@@ -95,7 +98,7 @@ api.MapPost("/types/preview", async (HttpContext ctx, GedDbContext db, PreviewTy
     if (doc.OcrStatus != "Completed" || request.Fields is null || request.Fields.Count is < 1 or > 100 ||
         request.Fields.Select(f => f.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Fields.Count)
         return Results.BadRequest(new { error = "Selecione um documento processado e campos com chaves únicas." });
-    return Results.Ok(extractor.Extract(doc.OcrText, request.Fields));
+    return Results.Ok(extractor.Extract(doc, request.Fields));
 });
 
 api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId, string? q,
@@ -105,7 +108,8 @@ api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId,
     var size = Math.Clamp(pageSize ?? 100, 1, 100);
     var offset = (Math.Clamp(page ?? 1, 1, 100_000) - 1) * size;
     IQueryable<GedDocument> docs = db.Documents;
-    if (!string.IsNullOrWhiteSpace(field) && !string.IsNullOrWhiteSpace(value))
+    var filterField = !string.IsNullOrWhiteSpace(field) && !string.IsNullOrWhiteSpace(value);
+    if (filterField)
     {
         if (!typeId.HasValue || !await db.DocumentTypes.AsNoTracking()
             .AnyAsync(t => t.Id == typeId.Value && t.TenantId == tenant, ctx.RequestAborted))
@@ -122,9 +126,13 @@ api.MapGet("/documents", async (HttpContext ctx, GedDbContext db, Guid? batchId,
     docs = docs.AsNoTracking().Where(x => x.TenantId == tenant);
     if (batchId.HasValue) docs = docs.Where(x => x.BatchId == batchId.Value);
     if (typeId.HasValue) docs = docs.Where(x => x.DocumentTypeId == typeId.Value);
-    if (!string.IsNullOrWhiteSpace(q)) docs = docs.Where(x => x.FileName.Contains(q) || x.OcrText.Contains(q));
-    var results = await docs.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
-        .Skip(offset).Take(size + (page.HasValue ? 1 : 0)).ToListAsync(ctx.RequestAborted);
+    var limit = size + (page.HasValue ? 1 : 0);
+    if (q?.Length > 250) return Results.BadRequest(new { error = "A busca aceita até 250 caracteres." });
+    var results = string.IsNullOrWhiteSpace(q)
+        ? await docs.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            .Skip(offset).Take(limit).ToListAsync(ctx.RequestAborted)
+        : await DocumentSearch.FindAsync(db, tenant, batchId, typeId, filterField ? field : null,
+            filterField ? value : null, q.Trim(), offset, limit, ctx.RequestAborted);
     if (page.HasValue) return Results.Ok(new { items = results.Take(size).Select(ViewDocument), hasMore = results.Count > size });
     return Results.Ok(results.Take(size).Select(ViewDocument));
 });
@@ -136,7 +144,7 @@ api.MapGet("/documents/{id:guid}", async (Guid id, HttpContext ctx, GedDbContext
     return d is null ? Results.NotFound() : Results.Ok(ViewDocument(d));
 });
 
-api.MapPost("/documents/upload", async (HttpContext ctx, GedDbContext db, IStorageProvider storage, IOcrProvider ocr, DocumentExtraction extractor, IFormFile file, Guid? batchId, CancellationToken ct) =>
+api.MapPost("/documents/upload", async (HttpContext ctx, GedDbContext db, IStorageProvider storage, IOcrProvider ocr, DocumentExtraction extractor, EvidenceExtraction evidence, IFormFile file, Guid? batchId, CancellationToken ct) =>
 {
     var tenant = Tenant(ctx);
     const long limit = 25 * 1024 * 1024;
@@ -150,13 +158,13 @@ api.MapPost("/documents/upload", async (HttpContext ctx, GedDbContext db, IStora
     var doc = new GedDocument { TenantId = tenant, FileName = Path.GetFileName(file.FileName), ContentType = file.ContentType, FileSize = size, StorageKey = key, Sha256 = hash, BatchId = batchId };
     db.Documents.Add(doc);
     await db.SaveChangesAsync(ct);
-    await Recognize(doc, db, storage, ocr, extractor, app.Logger, ct);
+    await Recognize(doc, db, storage, ocr, extractor, evidence, app.Logger, ct);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/documents/{doc.Id}", ViewDocument(doc));
 }).DisableAntiforgery(); // Local MVP only; use token-based antiforgery with production authentication.
 
 api.MapPost("/documents/{id:guid}/retry", async (Guid id, HttpContext ctx, GedDbContext db,
-    IStorageProvider storage, IOcrProvider ocr, DocumentExtraction extractor, CancellationToken ct) =>
+    IStorageProvider storage, IOcrProvider ocr, DocumentExtraction extractor, EvidenceExtraction evidence, CancellationToken ct) =>
 {
     var tenant = Tenant(ctx);
     var doc = await db.Documents.SingleOrDefaultAsync(d => d.Id == id && d.TenantId == tenant, ct);
@@ -164,12 +172,12 @@ api.MapPost("/documents/{id:guid}/retry", async (Guid id, HttpContext ctx, GedDb
     if (doc.OcrStatus != "Failed" || doc.Status == "Indexed")
         return Results.Conflict(new { error = "Apenas documentos com falha de leitura podem ser reprocessados." });
 
-    await Recognize(doc, db, storage, ocr, extractor, app.Logger, ct);
+    await Recognize(doc, db, storage, ocr, extractor, evidence, app.Logger, ct);
     await db.SaveChangesAsync(ct);
     return Results.Ok(ViewDocument(doc));
 });
 
-api.MapPost("/documents/{id:guid}/apply-template", async (Guid id, ApplyTemplateRequest request, HttpContext ctx, GedDbContext db, DocumentExtraction extraction) =>
+api.MapPost("/documents/{id:guid}/apply-template", async (Guid id, ApplyTemplateRequest request, HttpContext ctx, GedDbContext db, EvidenceExtraction extraction) =>
 {
     var tenant = Tenant(ctx);
     var doc = await db.Documents.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenant);
@@ -192,7 +200,13 @@ api.MapPost("/documents/{id:guid}/confirm", async (Guid id, ConfirmRequest reque
     var allowed = type.Fields.Select(x => x.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
     if (request.Values.Keys.Any(k => !allowed.Contains(k))) return Results.BadRequest(new { error = "Unknown field" });
     var values = JsonSerializer.Deserialize<Dictionary<string, FieldResult>>(doc.ValuesJson, JsonOptions.Default) ?? [];
-    foreach (var item in request.Values) values[item.Key] = new FieldResult(item.Value ?? "", 1, "human-reviewed");
+    foreach (var item in request.Values)
+    {
+        var reviewed = item.Value ?? "";
+        var evidence = values.TryGetValue(item.Key, out var original) && original.Value == reviewed
+            ? original.Evidence : null;
+        values[item.Key] = new FieldResult(reviewed, 1, "human-reviewed", evidence);
+    }
     if (type.Fields.Any(f => f.Required && (!values.TryGetValue(f.Key, out var v) || string.IsNullOrWhiteSpace(v.Value))))
         return Results.BadRequest(new { error = "Required fields missing" });
     var culture = System.Globalization.CultureInfo.GetCultureInfo("pt-BR");
@@ -230,7 +244,7 @@ api.MapPost("/documents/{id:guid}/pages/{page:int}/ocr", async (Guid id, int pag
 });
 
 api.MapPost("/types/{id:guid}/layout-rule", async (Guid id, LayoutRuleRequest request, HttpContext ctx,
-    GedDbContext db, DocumentExtraction extractor, CancellationToken ct) =>
+    GedDbContext db, EvidenceExtraction extractor, CancellationToken ct) =>
 {
     var tenant = Tenant(ctx);
     var type = await db.DocumentTypes.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id && t.TenantId == tenant && t.Active, ct);
@@ -255,7 +269,7 @@ api.MapPost("/types/{id:guid}/layout-rule", async (Guid id, LayoutRuleRequest re
     var rules = (field.Layouts ?? []).Where(rule => !string.Equals(rule.Marker, marker, StringComparison.OrdinalIgnoreCase)).ToList();
     rules.Add(new LayoutAnchor(marker, label));
     fields[index] = field with { Layouts = rules };
-    var result = extractor.Extract(test.OcrText, fields)[field.Key];
+    var result = extractor.Extract(test, fields)[field.Key];
     var value = result.Source == "layout-anchor" ? result.Value : "";
     if (!request.Publish) return Results.Ok(new { value });
     if (string.IsNullOrWhiteSpace(value) || !string.Equals(value, request.Expected?.Trim(), StringComparison.Ordinal))
@@ -345,19 +359,18 @@ api.MapGet("/boxes/{id:guid}/route", async (Guid id, HttpContext ctx, GedDbConte
 });
 
 static async Task Recognize(GedDocument doc, GedDbContext db, IStorageProvider storage,
-    IOcrProvider ocr, DocumentExtraction extractor, ILogger logger, CancellationToken ct)
+    IOcrProvider ocr, DocumentExtraction extractor, EvidenceExtraction evidence, ILogger logger, CancellationToken ct)
 {
     try
     {
         await using var source = await storage.OpenReadAsync(doc.TenantId, doc.StorageKey, ct);
-        doc.OcrText = await ocr.ReadAsync(doc.FileName, doc.ContentType, source, ct);
-        if (string.IsNullOrWhiteSpace(doc.OcrText)) throw new InvalidDataException("No readable text found.");
+        evidence.Store(doc, await ocr.ReadAsync(doc.FileName, doc.ContentType, source, ct));
         doc.OcrStatus = "Completed";
         doc.SuggestionsJson = JsonSerializer.Serialize(extractor.Suggest(doc.OcrText), JsonOptions.Default);
         doc.Status = "AwaitingTemplate";
         var types = await db.DocumentTypes.AsNoTracking().Where(x => x.TenantId == doc.TenantId && x.Active).ToListAsync(ct);
         var type = extractor.MatchType(doc.OcrText, types);
-        if (type != null) Apply(type, doc, extractor);
+        if (type != null) Apply(type, doc, evidence);
     }
     catch (Exception e) when (e is not OperationCanceledException)
     {
@@ -367,9 +380,9 @@ static async Task Recognize(GedDocument doc, GedDbContext db, IStorageProvider s
     }
 }
 
-static void Apply(DocumentType type, GedDocument doc, DocumentExtraction extractor)
+static void Apply(DocumentType type, GedDocument doc, EvidenceExtraction extractor)
 {
-    var values = extractor.Extract(doc.OcrText, type.Fields);
+    var values = extractor.Extract(doc, type.Fields);
     doc.DocumentTypeId = type.Id;
     doc.DocumentTypeVersion = type.Version;
     doc.ValuesJson = JsonSerializer.Serialize(values, JsonOptions.Default);
@@ -382,6 +395,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<GedDbContext>();
     await db.Database.EnsureCreatedAsync();
+    await DocumentSearch.InstallAsync(db);
     if (app.Environment.IsDevelopment())
         await InsuranceTemplateSeeder.SeedAsync(db);
 }
