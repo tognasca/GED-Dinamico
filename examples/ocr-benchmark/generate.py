@@ -14,7 +14,10 @@ from reportlab.pdfbase.ttfonts import TTFont
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--pilot", action="store_true", help="Add controls with absent fields.")
 parser.add_argument("--cmap-font", type=Path, help="TrueType font to add six digital CMap cases to the pilot.")
+parser.add_argument("--extended", action="store_true", help="Add ten digital and scanned release cases.")
 args = parser.parse_args()
+if args.extended and not args.cmap_font:
+    parser.error("--extended requires --pilot and --cmap-font")
 if args.cmap_font and not args.pilot:
     parser.error("--cmap-font requires --pilot")
 if args.cmap_font:
@@ -22,12 +25,17 @@ if args.cmap_font:
 output = Path(__file__).with_name("fixtures-pilot" if args.pilot else "fixtures")
 output.mkdir(exist_ok=True)
 manifest = {}
-for i in range(20 if args.cmap_font else 14 if args.pilot else 12):
+for i in range(30 if args.extended else 20 if args.cmap_font else 14 if args.pilot else 12):
     name = f"apolice-{i + 1:02}"
     fields = {"numero_apolice": f"202600{i + 10}", "placa": f"TST1A{i + 10}",
               "inicio_vigencia": f"{i + 1:02}/11/2026"}
-    cmap_case = i >= 14
-    if cmap_case:
+    cmap_case = 14 <= i < 20
+    digital = i < 6 or 20 <= i < 25
+    if i >= 20:
+        name = f"{'digital' if digital else 'scan'}-extended-{i - 19:02}"
+        if i in (22, 27):
+            fields["placa"] = ""
+    elif cmap_case:
         name = f"cmap-{i - 13:02}"
     elif i >= 12:
         name = f"scan-sem-placa-{i - 11:02}"
@@ -79,7 +87,7 @@ for i in range(20 if args.cmap_font else 14 if args.pilot else 12):
                 if not found:
                     raise RuntimeError("O PDF de teste precisa de um mapa ToUnicode de um byte.")
                 source.save(target)
-        elif i < 6:
+        elif digital:
             target.write_bytes(path.read_bytes())
         else:
             with pymupdf.open(path) as source:

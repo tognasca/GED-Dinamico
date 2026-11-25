@@ -42,6 +42,9 @@ function sourceExcerpt(text: string, value: string) {
 }
 
 function reviewIssue(field: Field, value: string, source?: string) {
+  if (source === 'invalid-format') return 'Formato reconhecido inválido';
+  if (source === 'unverified') return 'Valor sem evidência na leitura';
+  if (source === 'ambiguous-value') return 'Mais de um valor reconhecido';
   if (source === 'ambiguous-layout') return 'Layout ambíguo';
   if (!value.trim()) return field.required ? 'Campo obrigatório vazio' : 'Campo vazio';
   if (field.dataType === 'date' && !/^(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})$/.test(value.trim()))
@@ -270,7 +273,8 @@ function App() {
                     const value = corrections[field.key] ?? selected.values?.[field.key]?.value ?? '';
                     const issue = reviewIssue(field, value, corrections[field.key] === undefined ? selected.values?.[field.key]?.source : undefined);
                     if (onlyPending && !issue) return null;
-                    const evidence = corrections[field.key] === undefined ? sourceExcerpt(selected.ocrText, value) : null;
+                    const provenance = corrections[field.key] === undefined ? selected.values?.[field.key]?.evidence : null;
+                    const evidence = corrections[field.key] === undefined ? sourceExcerpt(provenance?.text ?? selected.ocrText, value) : null;
                     return <div className="control" key={field.key}><label className="control pdf-field-label">
                       <span>{field.label}{field.required ? ' *' : ''}</span>
                       <input value={value} aria-invalid={Boolean(issue && (field.required || value.trim()))} onChange={e=>setCorrections(previous=>({...previous,[field.key]:e.target.value}))}/>
@@ -283,7 +287,7 @@ function App() {
                         <LayoutRuleEditor document={selected} documents={documents} field={field}
                           version={current.version} sourceUrl={fileUrl} currentValue={value}
                           onSaved={() => { setNotice('Regra salva para os próximos documentos.'); void reload(); }}/>}
-                      {evidence && <details><summary>Ver trecho reconhecido</summary>
+                      {evidence && <details><summary>{provenance ? `Ver trecho reconhecido na página ${provenance.page}` : 'Ver trecho reconhecido'}</summary>
                         <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
                       </details>}
                     </div>;

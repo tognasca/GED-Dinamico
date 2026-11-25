@@ -43,7 +43,10 @@ def main():
         value = result.document.export_to_text()
         if not value.strip():
             raise RuntimeError(f"Documento sem texto: {name}")
-        samples[name] = {"text": value, "milliseconds": elapsed_ms, "sha256": fingerprint}
+        samples[name] = {
+            "text": value, "milliseconds": elapsed_ms, "sha256": fingerprint,
+            "structure": result.document.export_to_dict(),
+        }
         print(f"{name}: {elapsed_ms} ms", flush=True)
     payload = {
         "version": f"Docling {version('docling')} / parser {version('docling-parse')}",

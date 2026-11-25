@@ -99,3 +99,27 @@ registra as versões do núcleo e do parser. O critério do piloto ampliado é
 57/60 ou mais, zero preenchimentos indevidos, preservação dos acertos
 anteriores e pelo menos um erro corrigido nos casos novos para demonstrar
 ganho. A aprovação do comparador nos 18 campos sozinha indica paridade.
+
+## Camada de normalização e busca
+
+Use `generate.py --pilot --extended --cmap-font /caminho/DejaVuSans.ttf` para
+gerar o conjunto de 30 PDFs. O workflow OCR pilot compara a leitura anterior
+com o Docling Parse 7.28.0 e a normalização usada na API. O comparador exige
+95% ou mais de acertos, zero preenchimentos indevidos, preservação dos campos
+anteriormente corretos e p95 abaixo de 5 s. O tempo medido é o da conversão com
+o modelo já carregado. A imagem candidata de Docling Serve fica em
+`services/docling-candidate`.
+
+A busca usa texto em português e trigramas, com filtros por empresa, lote,
+tipo e campo confirmado. A inicialização da API adiciona os índices e as
+colunas novas ao PostgreSQL. O usuário usado nessa inicialização precisa de
+permissão para instalar `pg_trgm` e alterar a tabela de documentos.
+
+Azure Read é um fallback opcional para PDFs quando os mecanismos locais
+falham. Habilite por configuração do servidor com `Ocr__Azure__Enabled=true`,
+`Ocr__Azure__Endpoint` e `Ocr__Azure__Key`. Essa opção envia o PDF ao recurso
+Azure indicado. Mantenha a chave no ambiente do servidor.
+
+Para avaliar a recuperação, use consultas com o ID relevante previamente
+definido e conte quantas vezes ele aparece entre os cinco primeiros
+resultados de `GET /api/documents?q=...&page=1&pageSize=5`. O alvo é 90%.

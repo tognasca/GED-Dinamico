@@ -3,6 +3,9 @@ using System.Text.Json;
 using Ged.Api.Domain;
 using Ged.Api.Services;
 
+if (args.FirstOrDefault() == "--check-layer")
+    return await LayerChecks.RunAsync();
+
 if (args.FirstOrDefault() == "--compare-docling")
     return await DoclingComparison.RunAsync(args.Skip(1).ToArray());
 

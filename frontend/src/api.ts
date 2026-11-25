@@ -39,6 +39,7 @@ export type FieldResult = {
   value: string;
   confidence: number;
   source: string;
+  evidence?: { text: string; page: number; confidence?: number | null } | null;
 };
 
 export type Suggestion = {

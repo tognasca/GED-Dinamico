@@ -35,8 +35,9 @@ internal static class DoclingComparison
                 expected.Values.Any(truth => !truth.Keys.ToHashSet().SetEquals(Fields.Select(f => f.Key))))
                 throw new InvalidDataException("Use versões diferentes, com os mesmos idiomas, PDFs e campos esperados.");
 
-            var before = Score(expected, baseline);
-            var after = Score(expected, candidate);
+            var before = Score(expected, baseline, useEvidence: false);
+            var releaseGate = expected.Count >= 30;
+            var after = Score(expected, candidate, useEvidence: releaseGate);
             var total = expected.Count * Fields.Length;
             Console.WriteLine($"Docling {baseline.Version}: {before.Hits}/{total}. p95: {before.P95} ms.");
             Console.WriteLine($"Docling {candidate.Version}: {after.Hits}/{total}. p95: {after.P95} ms.");
@@ -45,7 +46,7 @@ internal static class DoclingComparison
             var noRegressions = before.CorrectFields.IsSubsetOf(after.CorrectFields);
             Console.WriteLine($"Docs digitais e escaneados sem queda agregada: {strataPass}. Campos antes corretos preservados: {noRegressions}.");
             return after.Hits * 100 >= total * 95 && strataPass && noRegressions &&
-                after.WrongPolicyNumbers == 0 && after.FalseFills == 0 ? 0 : 1;
+                after.WrongPolicyNumbers == 0 && after.FalseFills == 0 && (!releaseGate || after.P95 < 5000) ? 0 : 1;
         }
         catch (Exception error) when (error is IOException or JsonException or InvalidDataException)
         {
@@ -58,9 +59,10 @@ internal static class DoclingComparison
         JsonSerializer.Deserialize<T>(await File.ReadAllTextAsync(path), new JsonSerializerOptions(JsonSerializerDefaults.Web))
         ?? throw new InvalidDataException($"JSON inválido: {path}");
 
-    private static ScoreResult Score(Dictionary<string, Dictionary<string, string>> expected, Capture capture)
+    private static ScoreResult Score(Dictionary<string, Dictionary<string, string>> expected, Capture capture, bool useEvidence)
     {
         var extractor = new DocumentExtraction();
+        var normalizer = new EvidenceExtraction(extractor);
         var correct = new HashSet<(string File, string Field)>();
         var groups = new Dictionary<string, int>();
         int wrongPolicyNumbers = 0, falseFills = 0;
@@ -74,6 +76,15 @@ internal static class DoclingComparison
                 Regex.IsMatch(file, @"^apolice-(0[7-9]|1[0-2])\.pdf$") ? "escaneado" : "digital";
             groups.TryAdd(group, 0);
             var extracted = extractor.Extract(sample.Text, Fields);
+            if (useEvidence)
+            {
+                if (sample.Structure.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException($"Captura candidata sem estrutura: {file}");
+                var doc = new GedDocument();
+                normalizer.Store(doc, new OcrResult(sample.Text, "docling",
+                    TesseractOcrProvider.ReadDoclingEvidence(sample.Structure)));
+                extracted = normalizer.Extract(doc, Fields);
+            }
             foreach (var field in Fields)
             {
                 var actual = Normalize(extracted[field.Key].Value, field.DataType);
@@ -105,7 +116,7 @@ internal static class DoclingComparison
     }
 
     private sealed record Capture(string Version, string[] Languages, Dictionary<string, Sample> Documents);
-    private sealed record Sample(string Text, long Milliseconds, string Sha256);
+    private sealed record Sample(string Text, long Milliseconds, string Sha256, JsonElement Structure);
     private sealed record ScoreResult(int Hits, int WrongPolicyNumbers, int FalseFills, long P95,
         HashSet<(string File, string Field)> CorrectFields, Dictionary<string, int> HitsByGroup);
 }

@@ -7,17 +7,17 @@ namespace Ged.Api.Services;
 
 public interface IOcrProvider
 {
-    Task<string> ReadAsync(string fileName, string contentType, Stream file, CancellationToken ct);
+    Task<OcrResult> ReadAsync(string fileName, string contentType, Stream file, CancellationToken ct);
 }
 
 public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClientFactory clients, ILogger<TesseractOcrProvider> logger) : IOcrProvider
 {
-    public async Task<string> ReadAsync(string fileName, string contentType, Stream file, CancellationToken ct)
+    public async Task<OcrResult> ReadAsync(string fileName, string contentType, Stream file, CancellationToken ct)
     {
         if (contentType == "text/plain")
         {
             using var reader = new StreamReader(file, Encoding.UTF8, true, leaveOpen: true);
-            return await reader.ReadToEndAsync(ct);
+            return new(await reader.ReadToEndAsync(ct), "text", []);
         }
         var isPdf = contentType == "application/pdf";
         if (!isPdf && contentType is not ("image/png" or "image/jpeg" or "image/tiff" or "image/webp"))
@@ -39,7 +39,7 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
                     if (pagesWithText.Count > 0 && pagesWithText[^1].Length == 0)
                         pagesWithText.RemoveAt(pagesWithText.Count - 1);
                     if (pagesWithText.Count > 0 && pagesWithText.All(page => page.Count(char.IsLetterOrDigit) >= 30))
-                        return string.Join("\n", pagesWithText);
+                        return OcrResult.FromPages(pagesWithText, "poppler");
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
@@ -70,17 +70,43 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
                     }
                 }
 
-                await Execute(configuration["Ocr:PdfToPpm"] ?? "pdftoppm", ["-f", "1", "-l", "30", "-r", "200", "-png", input, Path.Combine(temp, "page")], ct);
-                pages.AddRange(Directory.GetFiles(temp, "page-*.png").OrderBy(x => x, StringComparer.Ordinal));
-                if (pages.Count == 0) throw new InvalidOperationException("PDF has no readable pages");
             }
-            else pages.Add(input);
-            var result = new StringBuilder();
-            foreach (var page in pages)
+
+            try
             {
-                result.AppendLine(await Execute(configuration["Ocr:Tesseract"] ?? "tesseract", [page, "stdout", "-l", configuration["Ocr:Languages"] ?? "por+eng"], ct));
+                if (isPdf)
+                {
+                    await Execute(configuration["Ocr:PdfToPpm"] ?? "pdftoppm",
+                        ["-f", "1", "-l", "30", "-r", "200", "-png", input, Path.Combine(temp, "page")], ct);
+                    pages.AddRange(Directory.GetFiles(temp, "page-*.png").OrderBy(x => x, StringComparer.Ordinal));
+                }
+                else pages.Add(input);
+
+                var result = new List<string>();
+                foreach (var page in pages)
+                    result.Add(await Execute(configuration["Ocr:Tesseract"] ?? "tesseract",
+                        [page, "stdout", "-l", configuration["Ocr:Languages"] ?? "por+eng"], ct));
+                if (result.Any(text => !string.IsNullOrWhiteSpace(text))) return OcrResult.FromPages(result, "tesseract");
+                throw new InvalidDataException("No readable text found.");
             }
-            return result.ToString();
+            catch (Exception error) when (isPdf && configuration.GetValue<bool>("Ocr:Azure:Enabled") &&
+                (error is not OperationCanceledException || !ct.IsCancellationRequested))
+            {
+                var key = configuration["Ocr:Azure:Key"];
+                if (string.IsNullOrWhiteSpace(key) ||
+                    !Uri.TryCreate(configuration["Ocr:Azure:Endpoint"], UriKind.Absolute, out var endpoint))
+                    throw new InvalidOperationException("Azure OCR is enabled but its endpoint or key is missing.");
+
+                logger.LogWarning("Local OCR failed ({ErrorType}); continuing with Azure Read", error.GetType().Name);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(45));
+                using var client = clients.CreateClient("AzureOcr");
+                try { return await AzureOcr.ReadAsync(client, endpoint, key, input, timeout.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    throw new TimeoutException("Azure OCR did not finish within the configured time budget.");
+                }
+            }
         }
         finally { Directory.Delete(temp, true); }
     }
@@ -119,7 +145,7 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         finally { directory.Delete(recursive: true); }
     }
 
-    private async Task<string> ReadWithDoclingAsync(string path, CancellationToken ct, string? serviceUrl = null)
+    private async Task<OcrResult> ReadWithDoclingAsync(string path, CancellationToken ct, string? serviceUrl = null)
     {
         using var client = clients.CreateClient("Docling");
         using var form = new MultipartFormDataContent();
@@ -128,6 +154,7 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         upload.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
         form.Add(upload, "files", "document.pdf");
         form.Add(new StringContent("text"), "to_formats");
+        if (serviceUrl is null) form.Add(new StringContent("json"), "to_formats");
         form.Add(new StringContent("true"), "do_ocr");
         form.Add(new StringContent("1"), "page_range");
         form.Add(new StringContent("30"), "page_range");
@@ -139,10 +166,86 @@ public sealed class TesseractOcrProvider(IConfiguration configuration, IHttpClie
         if (result.RootElement.GetProperty("status").GetString() == "success" &&
             result.RootElement.GetProperty("document").GetProperty("text_content").GetString() is { } text &&
             !string.IsNullOrWhiteSpace(text))
-            return text;
+        {
+            var document = result.RootElement.GetProperty("document");
+            var evidence = serviceUrl is null && document.TryGetProperty("json_content", out var structure)
+                ? ReadDoclingEvidence(structure) : [];
+            return new(text, serviceUrl is null ? "docling" : "paddle", evidence);
+        }
 
         throw new InvalidDataException("Docling did not return a complete text result.");
     }
+
+    public static List<OcrEvidence> ReadDoclingEvidence(JsonElement structure)
+    {
+        var evidence = new List<OcrEvidence>();
+        if (structure.ValueKind != JsonValueKind.Object) return evidence;
+        if (structure.TryGetProperty("texts", out var texts) && texts.ValueKind == JsonValueKind.Array)
+        foreach (var item in texts.EnumerateArray())
+        {
+            if (!item.TryGetProperty("text", out var raw) || raw.GetString() is not { Length: > 0 } text ||
+                !item.TryGetProperty("prov", out var provenance) || provenance.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var entry in provenance.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("page_no", out var page) || !page.TryGetInt32(out var number) || number < 1)
+                    continue;
+                var fragment = text;
+                if (entry.TryGetProperty("charspan", out var span) && span.ValueKind == JsonValueKind.Array && span.GetArrayLength() == 2)
+                {
+                    // Docling offsets count Unicode code points.
+                    var characters = text.EnumerateRunes().ToArray();
+                    if (span[0].TryGetInt32(out var start) && span[1].TryGetInt32(out var end) &&
+                        start >= 0 && end > start && end <= characters.Length)
+                        fragment = string.Concat(characters[start..end].Select(rune => rune.ToString()));
+                }
+                evidence.Add(new(fragment, number, ReadBounds(entry)));
+            }
+        }
+        if (structure.TryGetProperty("tables", out var tables) && tables.ValueKind == JsonValueKind.Array)
+            foreach (var table in tables.EnumerateArray())
+                ReadDoclingTable(table, evidence);
+        return evidence;
+    }
+
+    private static OcrBounds? ReadBounds(JsonElement entry)
+    {
+        if (entry.TryGetProperty("bbox", out var box) && box.ValueKind == JsonValueKind.Object &&
+            box.TryGetProperty("l", out var left) && box.TryGetProperty("t", out var top) &&
+            box.TryGetProperty("r", out var right) && box.TryGetProperty("b", out var bottom) &&
+            box.TryGetProperty("coord_origin", out var origin) && origin.GetString() is { } coordinates)
+            return new(left.GetDouble(), top.GetDouble(), right.GetDouble(), bottom.GetDouble(), coordinates);
+        return null;
+    }
+
+    private static void ReadDoclingTable(JsonElement table, List<OcrEvidence> evidence)
+    {
+        if (!table.TryGetProperty("prov", out var pages) || pages.ValueKind != JsonValueKind.Array ||
+            pages.GetArrayLength() != 1 || !pages[0].TryGetProperty("page_no", out var page) ||
+            !page.TryGetInt32(out var number) || number < 1 ||
+            !table.TryGetProperty("data", out var data) || !data.TryGetProperty("grid", out var grid) ||
+            grid.ValueKind != JsonValueKind.Array) return;
+
+        var rows = grid.EnumerateArray().Select(row => row.EnumerateArray().ToArray()).ToArray();
+        for (var row = 0; row < rows.Length; row++)
+        for (var column = 0; column < rows[row].Length; column++)
+        {
+            var label = CellText(rows[row][column]).TrimEnd(':');
+            if (label.Length == 0) continue;
+            if (column + 1 < rows[row].Length) Add(rows[row][column + 1]);
+            if (row + 1 < rows.Length && column < rows[row + 1].Length) Add(rows[row + 1][column]);
+
+            void Add(JsonElement cell)
+            {
+                var value = CellText(cell);
+                if (value.Length > 0)
+                    evidence.Add(new(value, number, ReadBounds(cell), Label: label));
+            }
+        }
+    }
+
+    private static string CellText(JsonElement cell) =>
+        cell.TryGetProperty("text", out var text) ? text.GetString()?.Trim() ?? "" : "";
 
     private static async Task<string> Execute(string command, IEnumerable<string> args, CancellationToken ct)
     {
