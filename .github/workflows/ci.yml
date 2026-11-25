@@ -7,6 +7,20 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ged
+          POSTGRES_PASSWORD: ged-test
+          POSTGRES_DB: ged_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ged -d ged_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -14,6 +28,10 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet restore backend/Ged.Api/Ged.Api.csproj
       - run: dotnet build backend/Ged.Api/Ged.Api.csproj --no-restore --configuration Release
+
+      - run: dotnet run --project examples/ocr-benchmark/Benchmark.csproj --configuration Release -- --check-layer
+        env:
+          GED_TEST_DATABASE: Host=127.0.0.1;Database=ged_test;Username=ged;Password=ged-test
 
   frontend:
     runs-on: ubuntu-latest

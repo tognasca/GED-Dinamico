@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths:
       - 'examples/ocr-benchmark/**'
-      - 'backend/Ged.Api/Services/DocumentExtraction.cs'
+      - 'backend/Ged.Api/Services/**'
       - '.github/workflows/ocr-pilot.yml'
   workflow_dispatch:
 
@@ -36,16 +36,16 @@ jobs:
           python -m venv .venv-pilot
           .venv-pilot/bin/pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.8.0+cpu' 'torchvision==0.23.0+cpu'
           .venv-pilot/bin/pip install 'docling==2.151.1' 'docling-parse==7.27.0' reportlab pymupdf
-          .venv-pilot/bin/python generate.py --pilot --cmap-font /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          .venv-pilot/bin/python generate.py --pilot --extended --cmap-font /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
           dotnet build Benchmark.csproj --configuration Release
       - name: Capture the baseline
         run: .venv-pilot/bin/python capture_docling.py fixtures-pilot capture-baseline.json
       - name: Change only the parser and capture the candidate
         run: |
-          .venv-pilot/bin/pip install --no-deps 'docling-parse==7.27.1'
+          .venv-pilot/bin/pip install --no-deps 'docling-parse==7.28.0'
           .venv-pilot/bin/pip check
           .venv-pilot/bin/python capture_docling.py fixtures-pilot capture-candidate.json
-      - name: Compare the 60 fields
+      - name: Compare the 90 fields
         run: |
           set -o pipefail
           dotnet run --project Benchmark.csproj --configuration Release --no-build -- --compare-docling fixtures-pilot/expected.json capture-baseline.json capture-candidate.json | tee "$GITHUB_STEP_SUMMARY"
