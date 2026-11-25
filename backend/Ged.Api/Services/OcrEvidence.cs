@@ -30,7 +30,10 @@ public sealed partial class EvidenceExtraction(DocumentExtraction extractor)
     {
         var evidence = JsonSerializer.Deserialize<List<OcrEvidence>>(document.OcrEvidenceJson, JsonOptions.Default) ?? [];
         var definitions = fields.ToArray();
-        var pages = document.OcrText.Split('\f').Select(page => extractor.Extract(page, definitions)).ToArray();
+        var sourcePages = document.OcrText.Split('\f');
+        var pages = sourcePages.Select(page => extractor.Extract(page, definitions)).ToArray();
+        var policies = definitions.Any(field => field.Key is "numero_apolice" or "placa" or "inicio_vigencia")
+            ? sourcePages.Select(PolicyNormalization.Read).ToArray() : [];
         var results = new Dictionary<string, FieldResult>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in definitions)
         {
@@ -38,8 +41,18 @@ public sealed partial class EvidenceExtraction(DocumentExtraction extractor)
             // The right-hand and lower cells may both contain a format-valid value.
             // Keep the field empty if they disagree with each other or with the text.
             if (field.Key is "numero_apolice" or "placa" or "inicio_vigencia")
-                candidates.AddRange(evidence.Where(item => string.Equals(item.Label, field.Label.TrimEnd(':'),
-                    StringComparison.OrdinalIgnoreCase)).Select(item => new FieldResult(item.Text, 0.75, "table", item)));
+            {
+                var normalized = policies.SelectMany(page => page.GetValueOrDefault(field.Key) ?? [])
+                    .Select(value => new FieldResult(value, 0.75, "label"))
+                    .Concat(evidence.Where(item => string.Equals(item.Label, field.Label.TrimEnd(':'),
+                        StringComparison.OrdinalIgnoreCase)).Select(item => new FieldResult(item.Text, 0.75, "table", item)))
+                    .Where(item => Valid(field, item.Value)).ToArray();
+                if (normalized.Length > 0)
+                {
+                    candidates.RemoveAll(item => item.Source is not ("layout-anchor" or "ambiguous-layout"));
+                    candidates.AddRange(normalized);
+                }
+            }
 
             var nonempty = candidates.Where(item => !string.IsNullOrWhiteSpace(item.Value)).ToArray();
             var valid = nonempty.Where(item => Valid(field, item.Value)).ToArray();
@@ -57,7 +70,7 @@ public sealed partial class EvidenceExtraction(DocumentExtraction extractor)
                 continue;
             }
 
-            var matches = evidence.Where(item => item.Label == null && ContainsValue(item.Text, result.Value)).ToArray();
+            var matches = evidence.Where(item => item.Label == null && ContainsValue(item.Text, result.Value, field.DataType)).ToArray();
             var match = result.Evidence;
             if (match == null && matches.Select(item => item.Page).Distinct().Take(2).Count() == 1)
                 match = matches.OrderByDescending(item => item.Confidence.HasValue).ThenBy(item => item.Text.Length).First();
@@ -70,15 +83,17 @@ public sealed partial class EvidenceExtraction(DocumentExtraction extractor)
             results[field.Key] = result;
             if (match != null)
             {
-                var excerpt = match.Text.Split('\n').FirstOrDefault(line => ContainsValue(line, result.Value)) ?? result.Value;
+                var excerpt = match.Text.Split('\n').FirstOrDefault(line => ContainsValue(line, result.Value, field.DataType)) ?? result.Value;
                 results[field.Key] = result with { Evidence = match with { Text = excerpt.Trim().Replace("\0", "") } };
             }
         }
         return results;
     }
 
-    private static bool ContainsValue(string text, string value)
+    private static bool ContainsValue(string text, string value, string dataType)
     {
+        if (dataType == "date")
+            text = DateSpacing().Replace(text, "$1$2");
         var start = 0;
         while (start <= text.Length - value.Length)
         {
@@ -101,6 +116,9 @@ public sealed partial class EvidenceExtraction(DocumentExtraction extractor)
             System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _),
         _ => true
     };
+
+    [GeneratedRegex(@"(\b[0-9]{1,2}/[0-9])[ \t]+([0-9]/[0-9]{4}\b)")]
+    private static partial Regex DateSpacing();
 
     [GeneratedRegex(@"^[0-9][0-9./-]{3,39}$")]
     private static partial Regex PolicyNumber();

@@ -46,7 +46,18 @@ internal static class LayerChecks
 
         normalizer.Store(doc, OcrResult.FromPages(["Placa:", "TST1A22"], "tesseract"));
         Require(normalizer.Extract(doc, fields)["placa"].Value == "", "Não cruzar páginas ao preencher campos");
-        Console.WriteLine("4 cenários de evidência aprovados.");
+        normalizer.Store(doc, OcrResult.FromPages(
+            ["Número da apolice 202600123 Placa TST1A22\nInicio da vigéncia\n08/1 1/2026"], "docling"));
+        values = normalizer.Extract(doc, fields);
+        Require(values["numero_apolice"].Value == "202600123" && values["placa"].Value == "TST1A22" &&
+            values["inicio_vigencia"] is { Value: "08/11/2026", Evidence.Text: "08/1 1/2026" },
+            "Rótulos e datas deformados no texto do OCR");
+
+        normalizer.Store(doc, OcrResult.FromPages(
+            ["Número da apolice: 202600123\nPlaca: TST1A22 Placa: TRT9B71"], "docling"));
+        Require(normalizer.Extract(doc, fields)["placa"] is { Value: "", Source: "ambiguous-value" },
+            "Valores conflitantes na mesma página");
+        Console.WriteLine("6 cenários de evidência aprovados.");
     }
 
     private static async Task CheckSearchAsync(string connection)

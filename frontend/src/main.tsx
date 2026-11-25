@@ -287,8 +287,8 @@ function App() {
                         <LayoutRuleEditor document={selected} documents={documents} field={field}
                           version={current.version} sourceUrl={fileUrl} currentValue={value}
                           onSaved={() => { setNotice('Regra salva para os próximos documentos.'); void reload(); }}/>}
-                      {evidence && <details><summary>{provenance ? `Ver trecho reconhecido na página ${provenance.page}` : 'Ver trecho reconhecido'}</summary>
-                        <small>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</small>
+                      {(evidence || provenance) && <details><summary>{provenance ? `Ver trecho reconhecido na página ${provenance.page}` : 'Ver trecho reconhecido'}</summary>
+                        <small>{evidence ? <>{evidence.before}<mark>{evidence.value}</mark>{evidence.after}</> : provenance?.text}</small>
                       </details>}
                     </div>;
                   })}
