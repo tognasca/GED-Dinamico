@@ -177,12 +177,12 @@ test('images keep their original visible and offer manual configuration', async 
 });
 
 test('daily review hides teaching controls and preserves corrections when teaching is opened', async () => {
-  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost', pretendToBeVisual: true });
   for (const key of ['window', 'document', 'HTMLElement', 'HTMLDialogElement', 'Event', 'MouseEvent']) global[key] = dom.window[key];
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   global.IS_REACT_ACT_ENVIRONMENT = true;
   URL.createObjectURL = () => 'blob:test'; URL.revokeObjectURL = () => {};
-  const doc = { ...source, values: { placa: { value: 'TST1A10', source: 'layout-anchor', confidence: 1 } }, status: 'NeedsReview', suggestions: [], createdAt: '2026-11-20T12:00:00Z' };
+  const doc = { ...source, values: { placa: { value: 'TST1A10', source: 'layout-anchor', confidence: 1, evidence: { text: 'Placa TST1A10', page: 3 } } }, status: 'NeedsReview', ocrText: 'Apólice de cobertura. Placa TST1A10', suggestions: [], createdAt: '2026-11-20T12:00:00Z' };
   const type = { id: 'type', name: 'Apólice Auto', version: 3, active: true, keywords: [], fields: [{ key: 'placa', label: 'Placa', dataType: 'text', required: true }] };
   const writes = [];
   global.fetch = async (url, options = {}) => {
@@ -190,12 +190,14 @@ test('daily review hides teaching controls and preserves corrections when teachi
     let data = [];
     if (String(url).endsWith('/types')) data = [type];
     if (String(url).endsWith('/documents')) data = [doc];
+    if (String(url).includes('/documents?')) data = { items: [doc], hasMore: false };
     if (String(url).endsWith('/confirm')) { writes.push(JSON.parse(options.body)); data = { ...doc, status: 'Indexed' }; }
     return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
   };
   const result = await build({ entryPoints: [path.join(__dirname, '../src/main.tsx')], bundle: true, write: false, format: 'cjs', platform: 'node', jsx: 'automatic',
     external: ['react', 'react/jsx-runtime', 'react-dom/client'], loader: { '.css': 'empty' },
-    plugins: [{ name: 'pdf-selection', setup(builder) { builder.onLoad({ filter: /\/PdfPicker\.tsx$/ }, () => ({ loader: 'jsx', contents: 'export default function Picker() { return null; }' })); } }],
+    plugins: [{ name: 'pdf-selection', setup(builder) { builder.onLoad({ filter: /\/PdfPicker\.tsx$/ }, () => ({ loader: 'jsx', contents: 'export default function Picker() { return null; }' }));
+      builder.onLoad({ filter: /\/PdfEvidence\.tsx$/ }, () => ({ loader: 'jsx', contents: 'export default function Evidence({page}) { return <div data-page={page}/>; }' })); } }],
   });
   const loaded = new Module(path.join(__dirname, 'app.cjs'), module);
   loaded.filename = path.join(__dirname, 'app.cjs'); loaded.paths = Module._nodeModulePaths(__dirname);
@@ -204,6 +206,12 @@ test('daily review hides teaching controls and preserves corrections when teachi
   async function click(text) { assert.ok(button(text), text); await act(async () => button(text).click()); }
   await click('Conferência'); await act(async () => document.querySelector('.review-queue .item').click());
   assert.equal(button('Ensinar leitura de Placa'), undefined);
+  await click('Ver no documento · pág. 3');
+  assert.equal(document.querySelector('.review-grid').classList.contains('review-tab-file'), true);
+  assert.equal(document.querySelector('[data-page]').dataset.page, '3');
+  await click('Ver PDF completo');
+  assert.ok(document.querySelector('iframe.review-file'));
+  await click('Campos');
   const input = document.querySelector('.pdf-field-label input');
   await act(async () => {
     Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, 'TST2A20');
@@ -213,5 +221,17 @@ test('daily review hides teaching controls and preserves corrections when teachi
   assert.equal(document.querySelector('.pdf-field-label input').value, 'TST2A20');
   assert.equal(button('Ensinar leitura de Placa'), undefined); assert.equal(writes.length, 0);
   await click(' Salvar na biblioteca'); assert.equal(writes[0].values.placa, 'TST2A20');
+  await click('Biblioteca');
+  const search = document.querySelector('input[type=search]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(search, 'cobertura');
+    search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  });
+  await click('Buscar');
+  assert.match(document.querySelector('.library-active').textContent, /cobertura/);
+  assert.equal(document.querySelector('.library-result mark').textContent, 'cobertura');
+  assert.match(document.querySelector('.library-result').textContent, /Para conferir/);
+  await click('Limpar filtros');
+  assert.equal(document.querySelector('.library-active'), null);
   dom.window.close();
 });

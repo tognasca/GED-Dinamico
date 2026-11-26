@@ -1,11 +1,12 @@
 import { lazy, Suspense } from 'react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Archive, Boxes, CheckCircle2, ChevronRight, CloudUpload, FileSearch, FileText, FolderOpen, Layers, LoaderCircle, Plus, ScanLine, Settings2, Sparkles, XCircle } from 'lucide-react';
 import { api, API_URL, DEMO_TENANT, type Batch, type DocumentType, type Field, type FieldResult, type GedDocument, type Suggestion } from './api';
 import './style.css';
 import LayoutRuleEditor from './LayoutRuleEditor';
 
+const PdfEvidence = lazy(() => import('./PdfEvidence'));
 const PdfPicker = lazy(() => import('./PdfPicker'));
 
 type View = 'review' | 'capture' | 'models' | 'documents' | 'batches' | 'physical';
@@ -39,6 +40,19 @@ function sourceExcerpt(text: string, value: string) {
   if (start < 0 || text.indexOf(needle, start + 1) >= 0) return null;
   const end = start + needle.length;
   return { before: text.slice(Math.max(0, start - 48), start), value: text.slice(start, end), after: text.slice(end, end + 48) };
+}
+
+const documentStatuses: Record<string, string> = {
+  Uploaded: 'Recebido', AwaitingTemplate: 'Aguardando modelo',
+  NeedsReview: 'Para conferir', Indexed: 'Na biblioteca',
+};
+
+function matchExcerpt(text: string, term: string) {
+  if (!term) return null;
+  const start = text.toLocaleLowerCase('pt-BR').indexOf(term.toLocaleLowerCase('pt-BR'));
+  if (start < 0) return null;
+  const end = start + term.length;
+  return { before: text.slice(Math.max(0, start - 40), start), match: text.slice(start, end), after: text.slice(end, end + 55) };
 }
 
 function reviewIssue(field: Field, value: string, source?: string) {
@@ -76,6 +90,8 @@ function App() {
   const [teachingMode, setTeachingMode] = useState(false);
   const [pickField, setPickField] = useState<Field>();
   const [reviewTab, setReviewTab] = useState<'fields' | 'file'>('fields');
+  const [evidencePage, setEvidencePage] = useState<number>();
+  const reviewFile = useRef<HTMLDivElement>(null);
   const [fileUrl, setFileUrl] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterField, setFilterField] = useState('');
@@ -87,6 +103,7 @@ function App() {
   const signature = JSON.stringify([testId, prepareFields(fields)]);
   useEffect(() => {
     setFileUrl('');
+    setEvidencePage(undefined);
     setReviewTab('fields');
     setPickField(undefined);
     setOnlyPending(false);
@@ -107,6 +124,16 @@ function App() {
     }).catch(error => { if (!controller.signal.aborted) setError(String(error)); });
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
   }, [selected?.id, selected?.contentType]);
+  function openEvidence(page: number) {
+    setPickField(undefined);
+    setEvidencePage(page);
+    setReviewTab('file');
+    window.requestAnimationFrame(() => {
+      reviewFile.current?.focus({ preventScroll: true });
+      reviewFile.current?.scrollIntoView?.({ block: 'nearest' });
+    });
+  }
+
   const [search, setSearch] = useState('');
   const [batchName, setBatchName] = useState('');
   const [batchId, setBatchId] = useState('');
@@ -131,6 +158,10 @@ function App() {
   }
   useEffect(() => { void reload(); }, []);
   const current = useMemo(() => types.find(t => t.id === selected?.documentTypeId), [types, selected]);
+  const appliedFilters = new URLSearchParams(libraryQuery);
+  const appliedType = types.find(type => type.id === appliedFilters.get('typeId'));
+  const appliedField = appliedType?.fields.find(field => field.key === appliedFilters.get('field'));
+  const appliedTerm = appliedFilters.get('q') ?? '';
   const suggestions = Array.isArray(selected?.suggestions) ? selected.suggestions as Suggestion[] : [];
 
   async function perform(task: () => Promise<void>) {
@@ -164,10 +195,11 @@ function App() {
         query.set('field', filterField);
         query.set('value', filterValue.trim());
       }
-      setLibraryQuery(query.toString());
+      const appliedQuery = query.toString();
       query.set('page', String(page));
       query.set('pageSize', '25');
       const result = await api<{ items: GedDocument[]; hasMore: boolean }>(`/documents?${query}`);
+      setLibraryQuery(appliedQuery);
       setResults(result.items);
       setLibraryPage(page);
       setHasMore(result.hasMore);
@@ -256,7 +288,13 @@ function App() {
                         setReviewTab('fields');
                         setNotice(`${pickField.label} preenchido a partir do PDF.`);
                       }}/>
-                  </Suspense> : <iframe className="review-file" title="PDF para conferência" src={fileUrl}/>
+                  </Suspense> : evidencePage ? <div className="review-file evidence-viewer" tabIndex={-1} ref={reviewFile}>
+                    <div className="evidence-toolbar"><strong>Página {evidencePage}</strong>
+                      <button type="button" className="secondary" onClick={() => setEvidencePage(undefined)}>Ver PDF completo</button></div>
+                    <Suspense fallback={<p role="status">Abrindo página {evidencePage}…</p>}>
+                      <PdfEvidence key={`${selected.id}-${evidencePage}`} url={fileUrl} page={evidencePage} fileName={selected.fileName}/>
+                    </Suspense>
+                  </div> : <iframe className="review-file" title="PDF para conferência" src={fileUrl}/>
                   : <div className="review-file review-image">
                       {selected.contentType !== 'image/tiff' && <img src={fileUrl} alt={selected.fileName}/>}
                       <a href={fileUrl} download={selected.fileName}>{selected.contentType === 'image/tiff' ? 'Baixar imagem TIFF para conferir' : 'Baixar imagem original'}</a>
@@ -264,10 +302,11 @@ function App() {
                 <div className="review-form">
                   <h2>Campos do documento</h2>
                   <div className="review-model">{current.name}</div>
+                  <p className="review-guidance">As correções dos campos são salvas neste documento.</p>
                   <button type="button" className="secondary" aria-pressed={teachingMode} onClick={() => { setTeachingMode(!teachingMode); setOnlyPending(false); }}>
                     {teachingMode ? 'Encerrar ensino do modelo' : 'Ensinar este modelo'}
                   </button>
-                  {teachingMode && <p>Escolha abaixo a informação que deseja ensinar. Para corrigir apenas este documento, edite os valores e salve na biblioteca.</p>}
+                  {teachingMode && <p>Escolha um campo para testar e publicar uma regra para os próximos documentos deste modelo.</p>}
                   <label className="checkbox"><input type="checkbox" checked={onlyPending} onChange={e=>setOnlyPending(e.target.checked)}/> Mostrar só pendências</label>
                   {current.fields.map(field => {
                     const value = corrections[field.key] ?? selected.values?.[field.key]?.value ?? '';
@@ -280,6 +319,10 @@ function App() {
                       <input value={value} aria-invalid={Boolean(issue && (field.required || value.trim()))} onChange={e=>setCorrections(previous=>({...previous,[field.key]:e.target.value}))}/>
                       {issue && <small className="field-warning">{issue}</small>}
                       </label>
+                      {fileUrl && selected.contentType === 'application/pdf' && provenance && Number.isInteger(provenance.page) && provenance.page > 0 &&
+                        <button type="button" className="secondary evidence-link" onClick={() => openEvidence(provenance.page)}>
+                          Ver no documento · pág. {provenance.page}
+                        </button>}
                       {fileUrl && selected.contentType === 'application/pdf' && <button type="button" className="secondary"
                         aria-pressed={pickField?.key === field.key}
                         onClick={() => { setPickField(field); setReviewTab('file'); }}>Selecionar no PDF</button>}
@@ -358,11 +401,59 @@ function App() {
             </button>)}</div> : <p>Nenhum documento pendente.</p>}
         </section>}
       </div>}
-      {view === 'documents' && <section className="panel"><div className="panel-title"><div><h2>Biblioteca documental</h2><p>Busca por tipo, campo indexado ou texto OCR</p></div><FileSearch size={21}/></div><input placeholder="Pesquisar documentos..." value={search} onChange={e=>setSearch(e.target.value)}/><div className="inline"><select aria-label="Tipo de documento" value={filterType} onChange={e=>{setFilterType(e.target.value);setFilterField('');setFilterValue('')}}><option value="">Todos os tipos</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>{filterType && <select aria-label="Campo indexado" value={filterField} onChange={e=>setFilterField(e.target.value)}><option value="">Qualquer campo</option>{types.find(t=>t.id===filterType)?.fields.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>}{filterField && <input aria-label="Valor do campo" value={filterValue} onChange={e=>setFilterValue(e.target.value)}/>}<button className="secondary" disabled={busy} onClick={()=>void searchLibrary()}>Buscar</button></div><div className="items">{(results ?? documents).map(d=><button className="item" key={d.id} onClick={()=>openDoc(d)}><FileText size={20}/><span><strong>{d.fileName}</strong><small>{new Date(d.createdAt).toLocaleString('pt-BR')}</small></span><span className="chip">{d.status}</span><ChevronRight size={15}/></button>)}</div>{results && <div className="inline library-pages">
-        <button className="secondary" disabled={busy || libraryPage === 1} onClick={()=>void searchLibrary(libraryPage - 1, true)}>Anterior</button>
-        <span>Página {libraryPage}</span>
-        <button className="secondary" disabled={busy || !hasMore} onClick={()=>void searchLibrary(libraryPage + 1, true)}>Próxima</button>
-      </div>}</section>}
+      {view === 'documents' && <section className="panel library">
+        <div className="panel-title"><h2>Biblioteca documental</h2><FileSearch size={21}/></div>
+        <form className="library-search" onSubmit={event => { event.preventDefault(); void searchLibrary(); }}>
+          <label className="control"><span>Pesquisar documentos</span>
+            <input type="search" placeholder="Nome do arquivo ou texto do documento" value={search} maxLength={250} onChange={e=>setSearch(e.target.value)}/></label>
+          <div className="library-filters">
+            <label className="control"><span>Tipo de documento</span>
+              <select value={filterType} onChange={e=>{setFilterType(e.target.value);setFilterField('');setFilterValue('')}}>
+                <option value="">Todos os tipos</option>{types.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select></label>
+            {filterType && <label className="control"><span>Campo indexado</span>
+              <select value={filterField} onChange={e=>{setFilterField(e.target.value);setFilterValue('')}}>
+                <option value="">Qualquer campo</option>{types.find(t=>t.id===filterType)?.fields.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
+              </select></label>}
+            {filterField && <label className="control"><span>Valor do campo</span>
+              <input value={filterValue} onChange={e=>setFilterValue(e.target.value)}/></label>}
+            <button className="primary" disabled={busy} type="submit">Buscar</button>
+          </div>
+        </form>
+        {(appliedTerm || appliedType) && <div className="library-active" aria-label="Filtros aplicados">
+          {appliedTerm && <span className="chip">Busca por “{appliedTerm}”</span>}
+          {appliedType && <span className="chip">{appliedType.name}</span>}
+          {appliedField && <span className="chip">{appliedField.label} contém “{appliedFilters.get('value')}”</span>}
+          <button type="button" className="text-button" disabled={busy} onClick={() => {
+            setSearch(''); setFilterType(''); setFilterField(''); setFilterValue('');
+            setResults(null); setLibraryQuery(''); setLibraryPage(1); setHasMore(false);
+          }}>Limpar filtros</button>
+        </div>}
+        <div className="items">
+          {(results ?? documents).length === 0 && <p role="status">{results ? 'Nenhum documento encontrado.' : 'Nenhum documento na biblioteca.'}</p>}
+          {(results ?? documents).map(doc => {
+            const excerpt = matchExcerpt(doc.ocrText, appliedTerm);
+            const fieldValue = appliedField && doc.values?.[appliedField.key]?.value;
+            const fileMatch = matchExcerpt(doc.fileName, appliedTerm);
+            return <button type="button" className="item library-result" key={doc.id} onClick={()=>openDoc(doc)}>
+              <FileText size={20}/><span>
+                <strong>{doc.fileName}</strong>
+                <small>{new Date(doc.createdAt).toLocaleString('pt-BR')}</small>
+                {fieldValue && <small>{appliedField?.label} · {fieldValue}</small>}
+                {excerpt ? <small>{excerpt.before}<mark>{excerpt.match}</mark>{excerpt.after}</small>
+                  : fileMatch && <small>Correspondência no nome do arquivo</small>}
+              </span>
+              <span className="chip">{doc.ocrStatus === 'Failed' ? 'Falha na leitura' : documentStatuses[doc.status] ?? 'Em processamento'}</span>
+              <ChevronRight size={15}/>
+            </button>;
+          })}
+        </div>
+        {results && <div className="inline library-pages">
+          <button className="secondary" disabled={busy || libraryPage === 1} onClick={()=>void searchLibrary(libraryPage - 1, true)}>Anterior</button>
+          <span>Página {libraryPage}</span>
+          <button className="secondary" disabled={busy || !hasMore} onClick={()=>void searchLibrary(libraryPage + 1, true)}>Próxima</button>
+        </div>}
+      </section>}
       {view === 'models' && <section className="panel"><div className="panel-title"><div><h2>Catálogo de modelos</h2><p>Estruturas criadas sem código</p></div><Layers size={22}/></div><div className="items">{types.length===0&&<p className="muted">Nenhum modelo criado. Vá à Central de digitalização para ensinar o primeiro.</p>}{types.map(t=><div className="item" key={t.id}><Layers size={20}/><span><strong>{t.name}</strong><small>{t.fields.map(f=>f.label).join(' · ')}</small></span><span className="chip">v{t.version}</span></div>)}</div></section>}
       {view === 'batches' && <section className="panel"><div className="panel-title"><div><h2>Lotes de digitalização</h2><p>Organize o processamento em grupos</p></div><FolderOpen size={21}/></div><div className="inline"><input placeholder="Nome do novo lote" value={batchName} onChange={e=>setBatchName(e.target.value)}/><button className="primary" disabled={!batchName.trim()||busy} onClick={()=>void perform(async()=>{await api('/batches',{method:'POST',body:JSON.stringify({name:batchName})});setBatchName('')})}><Plus size={16}/> Criar lote</button></div><div className="items">{batches.map(b=><div className="item" key={b.id}><FolderOpen size={20}/><span><strong>{b.name}</strong><small>{documents.filter(d=>d.batchId===b.id).length} documento(s)</small></span><span className="chip">{b.status}</span>{b.status==='Open'&&<button className="secondary" disabled={busy} onClick={()=>void perform(async()=>{await api(`/batches/${b.id}/close`,{method:'POST'});setNotice('Lote finalizado')})}>Finalizar</button>}</div>)}</div></section>}
       {view === 'physical' && <div className="workspace"><section className="panel"><div className="panel-title"><div><h2>Localizações dinâmicas</h2><p>Depósito → Fileira → Estante → Prateleira</p></div><Archive size={21}/></div><label className="control"><span>Nome</span><input value={locationName} onChange={e=>setLocationName(e.target.value)} placeholder="Ex.: Corredor 03"/></label><label className="control"><span>Tipo</span><input value={locationKind} onChange={e=>setLocationKind(e.target.value)}/></label><label className="control"><span>Dentro de</span><select value={locationParent} onChange={e=>setLocationParent(e.target.value)}><option value="">Raiz</option>{locations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><button className="primary full" disabled={!locationName.trim()||busy} onClick={()=>void perform(async()=>{await api('/locations',{method:'POST',body:JSON.stringify({name:locationName,kind:locationKind,parentId:locationParent||null})});setLocationName('')})}>Adicionar localização</button><div className="items">{locations.map(l=><div className="item" key={l.id}><Archive size={17}/><span><strong>{l.name}</strong><small>{l.kind} · {locations.find(p=>p.id===l.parentId)?.name||'Raiz'}</small></span></div>)}</div></section><section className="panel"><div className="panel-title"><div><h2>Caixas e rastreabilidade</h2><p>Vincule caixas a locais e documentos</p></div><Boxes size={21}/></div><label className="control"><span>Código da caixa</span><input value={boxCode} onChange={e=>setBoxCode(e.target.value)} placeholder="CX-00125"/></label><label className="control"><span>Localização</span><select value={boxLocation} onChange={e=>setBoxLocation(e.target.value)}><option value="">Selecione...</option>{locations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><button className="primary full" disabled={!boxCode||!boxLocation||busy} onClick={()=>void perform(async()=>{await api('/boxes',{method:'POST',body:JSON.stringify({code:boxCode,locationId:boxLocation})});setBoxCode('')})}>Cadastrar caixa</button><div className="items">{boxes.map(b=><button className="item" key={b.id} onClick={()=>void perform(async()=>{const result=await api<{route:{name:string}[];code:string}>(`/boxes/${b.id}/route`);setRoute(result.route.map(r=>r.name).join(' → ')+' → '+result.code)})}><Boxes size={17}/><span><strong>{b.code}</strong><small>Ver rota física</small></span><ChevronRight size={15}/></button>)}</div>{route&&<div className="route">{route}</div>}{selected&&<><div className="divider"/><label className="control"><span>Vincular caixa a {selected.fileName}</span><select value={assignBoxId} onChange={e=>setAssignBoxId(e.target.value)}><option value="">Selecione...</option>{boxes.map(b=><option key={b.id} value={b.id}>{b.code}</option>)}</select></label><button className="secondary full" disabled={!assignBoxId||busy} onClick={()=>void perform(async()=>{const d=await api<GedDocument>(`/documents/${selected.id}/box`,{method:'POST',body:JSON.stringify({boxId:assignBoxId})});setSelected(d);setNotice('Caixa vinculada')})}>Associar documento</button></>}</section></div>}
